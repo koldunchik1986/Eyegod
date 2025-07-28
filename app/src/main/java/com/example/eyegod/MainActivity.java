@@ -32,17 +32,17 @@ public class MainActivity extends AppCompatActivity {
     private File csvDir;
     private Handler mainHandler = new Handler(Looper.getMainLooper());
 
-    private final ActivityResultLauncher<Intent> filePickerLauncher = registerForActivityResult(
-        new ActivityResultContracts.StartActivityForResult(),
-        result -> {
-            if (result.getResultCode() == RESULT_OK && result.getData() != null) {
-                Uri uri = result.getData().getData();
-                if (uri != null) {
-                    importAndNormalizeCSV(uri);
-                }
+private final ActivityResultLauncher<Intent> filePickerLauncher = registerForActivityResult(
+    new ActivityResultContracts.StartActivityForResult(),
+    result -> {
+        if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+            Uri uri = result.getData().getData();
+            if (uri != null) {
+                importAndNormalizeCSV(uri);
             }
         }
-    );
+    }
+);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -67,13 +67,14 @@ public class MainActivity extends AppCompatActivity {
         buttonAddFile.setOnClickListener(v -> pickFile());
     }
 
-    private void pickFile() {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("*/*");
-        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"text/csv", "application/csv"});
-        filePickerLauncher.launch(intent);
-    }
+private void pickFile() {
+    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+    intent.addCategory(Intent.CATEGORY_OPENABLE);
+    intent.setType("text/csv"); // Указываем MIME-тип CSV
+    intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"text/csv", "application/csv"}); // Дополнительные MIME-типы
+    intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false); // Разрешаем выбрать только один файл
+    filePickerLauncher.launch(intent);
+}
 
     private void importAndNormalizeCSV(Uri uri) {
         new Thread(() -> {
