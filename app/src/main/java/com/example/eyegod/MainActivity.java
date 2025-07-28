@@ -55,7 +55,10 @@ private final ActivityResultLauncher<Intent> filePickerLauncher = registerForAct
         textViewResults = findViewById(R.id.textViewResults);
 
         csvDir = new File(getExternalFilesDir(null), "csv");
-        if (!csvDir.exists()) csvDir.mkdirs();
+        File csvDir = new File(getExternalFilesDir(null), "csv");
+        if (!csvDir.exists()) {
+            csvDir.mkdirs();
+            copyCsvFromAssets(); // Добавь этот метод
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -66,15 +69,41 @@ private final ActivityResultLauncher<Intent> filePickerLauncher = registerForAct
         buttonSearch.setOnClickListener(v -> startSearch());
         buttonAddFile.setOnClickListener(v -> pickFile());
     }
+        private void copyCsvFromAssets() {
+            AssetManager assetManager = getAssets();
+            try {
+                String[] files = assetManager.list("csv");
+                if (files != null) {
+                    for (String filename : files) {
+                        InputStream in = assetManager.open("csv/" + filename);
+                        File outFile = new File(getExternalFilesDir("csv"), filename);
+                        FileOutputStream out = new FileOutputStream(outFile);
+                        byte[] buffer = new byte[1024];
+                        int read;
+                        while ((read = in.read(buffer)) != -1) {
+                            out.write(buffer, 0, read);
+                        }
+                        in.close();
+                        out.close();
+                    }
+                }
+            } catch (IOException e) {
+                Toast.makeText(this, "Ошибка копирования: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            }
+        }
 
-private void pickFile() {
-    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-    intent.addCategory(Intent.CATEGORY_OPENABLE);
-    intent.setType("text/csv"); // Указываем MIME-тип CSV
-    intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"text/csv", "application/csv"}); // Дополнительные MIME-типы
-    intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false); // Разрешаем выбрать только один файл
-    filePickerLauncher.launch(intent);
-}
+    private void pickFile() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        // УДАЛИТЬ: intent.setType("*/*");
+
+        // Вместо этого — указать точные MIME-типы
+        String[] mimeTypes = {"text/csv", "application/csv", "text/plain"};
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
+        intent.setType("text/csv"); // Это сработает как "фильтр по умолчанию"
+
+        filePickerLauncher.launch(intent);
+    }
 
     private void importAndNormalizeCSV(Uri uri) {
         new Thread(() -> {
