@@ -265,42 +265,55 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startSearch() {
-        Log.d("Eyegod", "startSearch: вызван");
-        String query = editTextQuery.getText().toString().trim().toLowerCase();
-        if (query.isEmpty()) {
-            runOnUiThread(() -> textViewResults.setText("Введите запрос."));
-            return;
-        }
-
-        textViewResults.setText("Поиск...");
-
+        // Запускаем в фоновом потоке
         new Thread(() -> {
-            List<String> results = new ArrayList<>();
-            java.io.File[] files = csvDir.listFiles((dir, name) -> name.endsWith(".csv"));
+            try {
+                // Получаем текст запроса
+                String query = runOnUiThreadResult(() -> editTextQuery.getText().toString().trim());
 
-            Log.d("Eyegod", "Файлов для поиска: " + (files != null ? files.length : 0));
+                // Проверяем запрос
+                if (query.isEmpty()) {
+                    runOnUiThread(() -> textViewResults.setText("Введите запрос для поиска"));
+                    return;
+                }
 
-            if (files != null) {
-                for (java.io.File file : files) {
-                    Log.d("Eyegod", "Поиск в файле: " + file.getName());
+                // Приводим к нижнему регистру для поиска
+                query = query.toLowerCase();
+
+                // Список для результатов
+                List<String> results = new ArrayList<>();
+
+                // Получаем все CSV-файлы
+                File[] files = csvDir.listFiles((dir, name) -> name.toLowerCase().endsWith(".csv"));
+
+                if (files == null || files.length == 0) {
+                    runOnUiThread(() -> textViewResults.setText("Нет CSV-файлов для поиска"));
+                    return;
+                }
+
+                // Перебираем файлы
+                for (File file : files) {
                     try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file)))) {
                         String line;
                         while ((line = reader.readLine()) != null) {
-                            Log.d("Eyegod", "Строка: " + line);
                             line = line.trim();
                             if (line.isEmpty()) continue;
 
+                            // Разделяем по ;
                             String[] parts = line.split(";", -1);
-                            if (parts.length < 4) continue;
+                            if (parts.length < 4) continue; // Пропускаем некорректные
 
+                            // Извлекаем поля
                             String tel = cleanField(parts[0]);
                             String name = cleanField(parts[1]);
                             String tgId = cleanField(parts[2]);
                             String email = cleanField(parts[3]);
 
+                            // Объединяем для поиска
                             String searchable = (tel + name + tgId + email).toLowerCase();
+
+                            // Если есть совпадение
                             if (searchable.contains(query)) {
-                                Log.d("Eyegod", "Найдено: " + name);
                                 StringBuilder result = new StringBuilder();
                                 result.append("База: ").append(file.getName()).append("\n");
                                 result.append("ФИО: ").append(name.isEmpty() ? "отсутствует" : name).append("\n");
@@ -310,20 +323,45 @@ public class MainActivity extends AppCompatActivity {
                                 results.add(result.toString());
                             }
                         }
-                    } catch (IOException e) {
+                    } catch (Exception e) {
+                        // Логируем ошибку чтения файла
                         Log.e("Eyegod", "Ошибка чтения файла: " + file.getName(), e);
-                        results.add("Ошибка: " + file.getName());
                     }
                 }
+
+                // Формируем итоговый текст
+                String finalText;
+                if (results.isEmpty()) {
+                    finalText = "Ничего не найдено по запросу: " + query;
+                } else {
+                    finalText = String.join("\n\n", results); // Два переноса между результатами
+                }
+
+                // Выводим результат в UI
+                runOnUiThread(() -> textViewResults.setText(finalText));
+
+            } catch (Exception e) {
+                Log.e("Eyegod", "Ошибка в поиске", e);
+                runOnUiThread(() -> textViewResults.setText("Ошибка поиска: " + e.getMessage()));
             }
-
-            String finalText = results.isEmpty()
-                    ? "Ничего не найдено по запросу: " + query
-                    : String.join("\n\n", results);
-
-            Log.d("Eyegod", "Результат: " + finalText);
-
-            runOnUiThread(() -> textViewResults.setText(finalText));
         }).start();
+    }
+    private String runOnUiThreadResult(java.util.function.Supplier<String> supplier) {
+        final String[] result = {null};
+        final Object lock = new Object();
+        runOnUiThread(() -> {
+            result[0] = supplier.get();
+            synchronized (lock) {
+                lock.notify();
+            }
+        });
+        synchronized (lock) {
+            try {
+                lock.wait();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        return result[0];
     }
 }
