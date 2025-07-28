@@ -80,14 +80,26 @@
         android:layout_marginTop="16dp">
 
         <TextView
-            android:id="@+id/textViewVersion"
-            android:layout_width="wrap_content"
+            android:id="@+id/textViewResults"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginTop="8dp"
-            android:text="Версия: v1.0.1"
-            android:textSize="12sp"
-            android:textColor="#666" />
+            android:textSize="16sp"
+            android:lineSpacingExtra="4dp"
+            android:scrollbars="vertical"
+            android:maxLines="1000"
+            android:ellipsize="end" />
+
     </ScrollView>
+
+    <!-- Отображение версии приложения -->
+    <TextView
+        android:id="@+id/textViewVersion"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="8dp"
+        android:text="Версия: v1.0.1"
+        android:textSize="12sp"
+        android:textColor="#666" />
 
 </LinearLayout>
