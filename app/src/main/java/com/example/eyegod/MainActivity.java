@@ -1,18 +1,11 @@
 package com.example.eyegod;
 
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
-
-import android.database.Cursor;
-import android.provider.OpenableColumns;
 import android.Manifest;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
@@ -21,8 +14,7 @@ import android.os.Looper;
 import android.provider.OpenableColumns;
 import android.view.View;
 import android.widget.*;
-import android.app.AlertDialog;
-import android.content.DialogInterface;
+
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -71,13 +63,13 @@ public class MainActivity extends AppCompatActivity {
         buttonSearch = findViewById(R.id.buttonSearch);
         buttonAddFile = findViewById(R.id.buttonAddFile);
         textViewResults = findViewById(R.id.textViewResults);
+        textViewVersion = findViewById(R.id.textViewVersion);
         buttonShowFiles = findViewById(R.id.buttonShowFiles);
         listViewFiles = findViewById(R.id.listViewFiles);
         layoutFileActions = findViewById(R.id.layoutFileActions);
         buttonDeleteFile = findViewById(R.id.buttonDeleteFile);
         buttonRenameFile = findViewById(R.id.buttonRenameFile);
         buttonShareFile = findViewById(R.id.buttonShareFile);
-        textViewVersion = findViewById(R.id.textViewVersion); // ✅
 
         csvDir = new File(getExternalFilesDir(null), "csv");
         if (!csvDir.exists()) csvDir.mkdirs();
@@ -155,18 +147,17 @@ public class MainActivity extends AppCompatActivity {
             startActivity(Intent.createChooser(shareIntent, "Отправить"));
         });
 
-        setVersionName(); // ✅ Устанавливаем версию
+        setVersionName();
         copySamplesFromAssets();
     }
 
-    // ✅ Метод для отображения версии
     private void setVersionName() {
         try {
             String versionName = getPackageManager()
                     .getPackageInfo(getPackageName(), 0).versionName;
             textViewVersion.setText("Версия: v" + versionName);
         } catch (Exception e) {
-            textViewVersion.setText("Версия: v1.0.1");
+            textViewVersion.setText("Версия: v1.0.2");
         }
     }
 
@@ -190,12 +181,47 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
 
-                List<String[]> records = parseInputCSV(inputStream);
+                BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
+                String headerLine = reader.readLine();
+                if (headerLine == null) {
+                    mainHandler.post(() ->
+                            Toast.makeText(this, "Файл пустой", Toast.LENGTH_SHORT).show()
+                    );
+                    return;
+                }
+
+                String delimiter = headerLine.contains(";") ? ";" : "\\|";
+                String[] headers = headerLine.trim().split(delimiter, -1);
+
+                inputStream.close();
+                inputStream = getContentResolver().openInputStream(uri);
+                reader = new BufferedReader(new InputStreamReader(inputStream));
+                reader.readLine(); // skip header
+
+                // Вызываем диалог сопоставления (в UI потоке)
+                Map<String, Integer> fieldMapping = showMappingDialog(headers);
+                if (fieldMapping == null) return;
+
+                List<Map<String, String>> records = new ArrayList<>();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
+                    String[] parts = line.split(delimiter, -1);
+                    Map<String, String> record = new HashMap<>();
+                    for (int i = 0; i < headers.length; i++) {
+                        String key = headers[i].trim().toLowerCase();
+                        String value = i < parts.length ? cleanField(parts[i]) : "";
+                        record.put(key, value);
+                    }
+                    records.add(record);
+                }
+
                 inputStream.close();
 
                 String fileName = getFileName(uri);
                 if (fileName == null || fileName.isEmpty()) {
-                    fileName = "imported_file.csv";
+                    fileName = "imported_" + System.currentTimeMillis() + ".csv";
                 }
 
                 File outputFile = getUniqueFileForSave(fileName);
@@ -208,10 +234,17 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 try (OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(outputFile))) {
-                    for (String[] row : records) {
-                        writer.write(String.join(";", row) + "\n");
+                    writer.write(headerLine + "\n");
+                    for (Map<String, String> record : records) {
+                        List<String> values = new ArrayList<>();
+                        for (String header : headers) {
+                            values.add(record.getOrDefault(header.trim().toLowerCase(), ""));
+                        }
+                        writer.write(String.join(";", values) + "\n");
                     }
                 }
+
+                saveSearchTemplate(outputFile.getName(), headers);
 
                 mainHandler.post(() -> {
                     Toast.makeText(this, "Файл добавлен: " + outputFile.getName(), Toast.LENGTH_LONG).show();
@@ -224,7 +257,83 @@ public class MainActivity extends AppCompatActivity {
                         Toast.makeText(this, "Ошибка: " + e.getMessage(), Toast.LENGTH_LONG).show()
                 );
             }
-        }).start();
+        }).start(); // ✅ Это закрытие new Thread().start()
+    } // ✅ Это закрытие метода importAndNormalizeCSV
+    private Map<String, Integer> showMappingDialog(String[] headers) {
+        Map<String, Integer> mapping = new HashMap<>();
+        boolean[] finished = {false};
+
+        mainHandler.post(() -> {
+            AlertDialog.Builder builder = new AlertDialog.Builder(this);
+            builder.setTitle("Сопоставьте поля");
+
+            LinearLayout layout = new LinearLayout(this);
+            layout.setOrientation(LinearLayout.VERTICAL);
+            layout.setPadding(32, 16, 32, 16);
+
+            List<EditText> editTexts = new ArrayList<>();
+            for (String header : headers) {
+                TextView tv = new TextView(this);
+                tv.setText("Поле: " + header);
+                layout.addView(tv);
+
+                EditText et = new EditText(this);
+                et.setHint("Ключ (tel, email, name, tg_id или новый)");
+                et.setText(inferKey(header));
+                layout.addView(et);
+                editTexts.add(et);
+            }
+
+            ScrollView scrollView = new ScrollView(this);
+            scrollView.addView(layout);
+            builder.setView(scrollView);
+
+            builder.setPositiveButton("OK", (d, w) -> {
+                for (int i = 0; i < headers.length; i++) {
+                    String key = editTexts.get(i).getText().toString().trim().toLowerCase();
+                    if (!key.isEmpty()) {
+                        mapping.put(key, i);
+                    }
+                }
+                finished[0] = true;
+            });
+            builder.setNegativeButton("Отмена", (d, w) -> {
+                mapping.clear();
+                finished[0] = true;
+            });
+
+            AlertDialog dialog = builder.create();
+            dialog.setCancelable(false);
+            dialog.show();
+        });
+
+        while (!finished[0]) {
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                return null;
+            }
+        }
+
+        return mapping.isEmpty() ? null : mapping;
+    }
+
+    private String inferKey(String header) {
+        header = header.toLowerCase();
+        if (header.contains("tel") || header.contains("phone")) return "tel";
+        if (header.contains("mail") || header.contains("email")) return "email";
+        if (header.contains("name") || header.contains("fio") || header.contains("фио")) return "name";
+        if (header.contains("tg") || header.contains("telegram")) return "tg_id";
+        return header;
+    }
+
+    private void saveSearchTemplate(String fileName, String[] headers) {
+        SharedPreferences prefs = getSharedPreferences("templates", MODE_PRIVATE);
+        StringBuilder sb = new StringBuilder();
+        for (String header : headers) {
+            sb.append("$").append(header.trim().toLowerCase()).append(" ");
+        }
+        prefs.edit().putString(fileName, sb.toString().trim()).apply();
     }
 
     private String getFileName(Uri uri) {
@@ -363,31 +472,51 @@ public class MainActivity extends AppCompatActivity {
             runOnUiThread(() -> textViewResults.setText("Введите запрос."));
             return;
         }
+
         textViewResults.setText("Поиск...");
         new Thread(() -> {
             List<String> results = new ArrayList<>();
             File[] files = csvDir.listFiles((dir, name) -> name.endsWith(".csv"));
             if (files == null) return;
+
+            SharedPreferences prefs = getSharedPreferences("templates", MODE_PRIVATE);
+
             for (File file : files) {
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file)))) {
+                    String headerLine = reader.readLine();
+                    if (headerLine == null) continue;
+
+                    String[] headers = headerLine.trim().split("[;|]", -1);
+                    String template = prefs.getString(file.getName(), "$tel $name $email $tg_id");
+
                     String line;
                     while ((line = reader.readLine()) != null) {
                         line = line.trim();
                         if (line.isEmpty()) continue;
-                        String[] parts = line.split(";", -1);
-                        if (parts.length < 4) continue;
-                        String tel = cleanField(parts[0]);
-                        String name = cleanField(parts[1]);
-                        String tgId = cleanField(parts[2]);
-                        String email = cleanField(parts[3]);
-                        String searchable = (tel + name + tgId + email).toLowerCase();
-                        if (searchable.contains(query)) {
-                            StringBuilder result = new StringBuilder();
-                            result.append("База: ").append(file.getName()).append("\n");
-                            result.append("ФИО: ").append(name.isEmpty() ? "отсутствует" : name).append("\n");
-                            result.append("Телефон: ").append(tel.isEmpty() ? "отсутствует" : tel).append("\n");
-                            result.append("Telegram: ").append(tgId.isEmpty() ? "отсутствует" : tgId).append("\n");
-                            result.append("email: ").append(email.isEmpty() ? "отсутствует" : email);
+                        String[] parts = line.split("[;|]", -1);
+                        if (parts.length < headers.length) continue;
+
+                        Map<String, String> record = new HashMap<>();
+                        for (int i = 0; i < headers.length; i++) {
+                            String key = "$" + headers[i].trim().toLowerCase();
+                            String value = i < parts.length ? cleanField(parts[i]) : "";
+                            record.put(key, value);
+                        }
+
+                        boolean found = false;
+                        StringBuilder result = new StringBuilder();
+                        result.append("База: ").append(file.getName()).append("\n");
+                        for (String header : headers) {
+                            String key = "$" + header.trim().toLowerCase();
+                            String value = record.get(key);
+                            if (value != null && value.toLowerCase().contains(query)) {
+                                found = true;
+                            }
+                            result.append(header).append(": ").append(value.isEmpty() ? "отсутствует" : value).append("\n");
+                        }
+                        result.append("\n");
+
+                        if (found) {
                             results.add(result.toString());
                         }
                     }
@@ -395,9 +524,11 @@ public class MainActivity extends AppCompatActivity {
                     results.add("Ошибка чтения: " + file.getName());
                 }
             }
+
             String finalText = results.isEmpty() ?
                     "Ничего не найдено: " + query :
-                    String.join("\n", results);
+                    String.join("", results);
+
             runOnUiThread(() -> textViewResults.setText(finalText));
         }).start();
     }
@@ -420,10 +551,10 @@ public class MainActivity extends AppCompatActivity {
         listViewFiles.setAdapter(adapter);
         listViewFiles.setVisibility(View.VISIBLE);
         layoutFileActions.setVisibility(View.GONE);
-        listViewFiles.setOnItemClickListener((p, v, pos, id) -> {
-            selectedFile = files[pos];
-            layoutFileActions.setVisibility(View.VISIBLE);
-        });
+            listViewFiles.setOnItemClickListener((p, v, pos, id) -> {
+                selectedFile = files[pos];
+                layoutFileActions.setVisibility(View.VISIBLE);
+            });
         selectedFile = null;
     }
 
