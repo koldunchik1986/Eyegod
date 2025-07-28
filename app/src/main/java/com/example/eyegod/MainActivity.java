@@ -1,26 +1,24 @@
 package com.example.eyegod;
 
 import androidx.appcompat.app.AppCompatActivity;
-
 import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.OpenableColumns;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
-
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
@@ -31,17 +29,15 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity {
-
     private EditText editTextQuery;
     private Button buttonSearch, buttonAddFile;
     private TextView textViewResults;
-
     private static final int REQUEST_CODE_PERMISSION = 100;
     private File csvDir;
     private Handler mainHandler = new Handler(Looper.getMainLooper());
+    private Uri lastPickedUri; // Для временного хранения URI выбранного файла
 
     // Для выбора файла
     private final ActivityResultLauncher<Intent> filePickerLauncher = registerForActivityResult(
@@ -50,6 +46,7 @@ public class MainActivity extends AppCompatActivity {
                 if (result.getResultCode() == RESULT_OK && result.getData() != null) {
                     Uri uri = result.getData().getData();
                     if (uri != null) {
+                        lastPickedUri = uri;
                         importAndNormalizeCSV(uri);
                     }
                 }
@@ -69,7 +66,7 @@ public class MainActivity extends AppCompatActivity {
         csvDir = new File(getExternalFilesDir(null), "csv");
         if (!csvDir.exists()) csvDir.mkdirs();
 
-        // Проверка разрешений
+        // Проверка разрешений (опционально для ACTION_OPEN_DOCUMENT)
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
                 != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this,
@@ -86,20 +83,15 @@ public class MainActivity extends AppCompatActivity {
     private void pickFile() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-
-        // Лучший вариант: используем text/* — покрывает CSV, TXT и другие текстовые форматы
-        intent.setType("text/plain"); // Это самый надёжный MIME-тип для CSV
-
-        // Дополнительно: добавим поддержку других возможных типов
+        intent.setType("text/plain");
         String[] mimeTypes = {
-                "text/plain",        // Любой текстовый файл
-                "text/csv",          // Стандартный CSV
-                "application/csv",   // Альтернативный CSV
-                "application/vnd.ms-excel", // Excel, но часто используется для CSV
-                "*/*"                // Fallback — но не обязателен
+                "text/plain",
+                "text/csv",
+                "application/csv",
+                "application/vnd.ms-excel",
+                "*/*"
         };
         intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
-
         filePickerLauncher.launch(intent);
     }
 
@@ -107,12 +99,33 @@ public class MainActivity extends AppCompatActivity {
         new Thread(() -> {
             try {
                 InputStream inputStream = getContentResolver().openInputStream(uri);
+                if (inputStream == null) {
+                    mainHandler.post(() ->
+                            Toast.makeText(this, "Не удалось открыть файл", Toast.LENGTH_LONG).show()
+                    );
+                    return;
+                }
+
                 List<String[]> records = parseInputCSV(inputStream);
                 inputStream.close();
 
-                String fileName = "imported_" + System.currentTimeMillis() + ".csv";
-                File outputFile = new File(csvDir, fileName);
+                // Получаем оригинальное имя файла
+                String fileName = getFileName(uri);
+                if (fileName == null || fileName.isEmpty() || !fileName.toLowerCase().endsWith(".csv")) {
+                    fileName = "imported_file.csv";
+                }
 
+                // Проверяем уникальность имени и содержимого
+                File outputFile = getUniqueFileForSave(fileName);
+                if (outputFile == null) {
+                    final String finalFileName = fileName; // <-- Копия, которая effectively final
+                    mainHandler.post(() ->
+                            Toast.makeText(this, "Файл уже добавлен: " + finalFileName, Toast.LENGTH_SHORT).show()
+                    );
+                    return;
+                }
+
+                // Сохраняем нормализованные данные
                 try (OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(outputFile))) {
                     for (String[] row : records) {
                         writer.write(String.join(";", row) + "\n");
@@ -120,17 +133,86 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 mainHandler.post(() ->
-                        Toast.makeText(this, "Файл добавлен и нормализован: " + fileName, Toast.LENGTH_LONG).show()
+                        Toast.makeText(this, "Файл добавлен: " + outputFile.getName(), Toast.LENGTH_LONG).show()
                 );
 
             } catch (Exception e) {
+                e.printStackTrace();
                 mainHandler.post(() ->
-                        Toast.makeText(this, "Ошибка обработки файла: " + e.getMessage(), Toast.LENGTH_LONG).show()
+                        Toast.makeText(this, "Ошибка: " + e.getMessage(), Toast.LENGTH_LONG).show()
                 );
             }
         }).start();
     }
 
+    // Получить оригинальное имя файла из URI
+    private String getFileName(Uri uri) {
+        String result = null;
+        try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (nameIndex != -1) {
+                    result = cursor.getString(nameIndex);
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        if (result == null) {
+            result = new File(uri.getPath()).getName();
+        }
+        return result;
+    }
+
+    // Генерация уникального имени файла с учётом содержимого
+    private File getUniqueFileForSave(String originalFileName) {
+        if (!originalFileName.toLowerCase().endsWith(".csv")) {
+            originalFileName += ".csv";
+        }
+
+        File targetFile = new File(csvDir, originalFileName);
+        String baseName = originalFileName.substring(0, originalFileName.length() - 4);
+        int counter = 1;
+
+        while (targetFile.exists()) {
+            try {
+                InputStream newStream = getContentResolver().openInputStream(lastPickedUri);
+                if (newStream != null && filesContentEquals(targetFile, newStream)) {
+                    return null; // Файлы идентичны — не сохраняем
+                }
+            } catch (IOException e) {
+                // Ошибка при сравнении — продолжаем с новым именем
+            }
+
+            targetFile = new File(csvDir, baseName + "_" + counter + ".csv");
+            counter++;
+        }
+
+        return targetFile;
+    }
+
+    // Сравнение содержимого двух файлов
+    private boolean filesContentEquals(File file, InputStream inputStream) throws IOException {
+        if (!file.exists()) return false;
+
+        try (FileInputStream fis = new FileInputStream(file);
+             BufferedReader reader1 = new BufferedReader(new InputStreamReader(fis));
+             BufferedReader reader2 = new BufferedReader(new InputStreamReader(inputStream))) {
+
+            String line1, line2 = null;
+            while ((line1 = reader1.readLine()) != null) {
+                line2 = reader2.readLine();
+                if (line1.trim().equals(line2 == null ? "" : line2.trim())) {
+                    continue;
+                } else {
+                    return false;
+                }
+            }
+            return line2 == null;
+        }
+    }
+
+    // Парсинг CSV: определяем разделитель и нормализуем порядок полей
     private List<String[]> parseInputCSV(InputStream inputStream) throws IOException {
         BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
         List<String[]> normalizedData = new ArrayList<>();
@@ -140,18 +222,14 @@ public class MainActivity extends AppCompatActivity {
             line = line.trim();
             if (line.isEmpty()) continue;
 
-            // Определяем разделитель
             String delimiter = line.contains(";") ? ";" : "\\|";
-
             String[] parts = line.split(delimiter, -1);
-            if (parts.length != 4) continue; // Пропускаем некорректные
+            if (parts.length != 4) continue;
 
-            // Пробуем определить порядок полей по заголовкам или содержимому
             String tel = "", name = "", tgId = "", email = "";
 
-            // Попробуем угадать порядок
-            for (int i = 0; i < 4; i++) {
-                String field = parts[i].trim();
+            for (String field : parts) {
+                field = field.trim();
                 if (field.matches(".*[а-яА-Яa-zA-Z]{2,}.*") && !field.contains("@") && !field.contains("+") && !field.matches(".*\\d.*")) {
                     name = field;
                 } else if (field.contains("@")) {
@@ -163,28 +241,25 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
 
-            // Если не удалось — используем как есть (наугад по позициям)
             if (name.isEmpty() || tel.isEmpty() || email.isEmpty() || tgId.isEmpty()) {
-                // Попробуем по порядку: предположим, что это один из шаблонов
                 if (line.contains("tel") || line.contains("phone") || parts[0].matches(".*\\d.*")) {
-                    // Вариант 1: tel;email;tg_id;name
                     tel = parts[0].trim();
                     email = parts[1].trim();
                     tgId = parts[2].trim();
                     name = parts[3].trim();
                 } else if (line.contains("tg") || parts[0].startsWith("@")) {
-                    // Вариант 2: tg_id;email;name;tel
                     tgId = parts[0].trim();
                     email = parts[1].trim();
                     name = parts[2].trim();
                     tel = parts[3].trim();
                 } else {
-                    // Дефолт: оставляем как есть
-                    tel = parts[0]; name = parts[1]; tgId = parts[2]; email = parts[3];
+                    tel = parts[0];
+                    name = parts[1];
+                    tgId = parts[2];
+                    email = parts[3];
                 }
             }
 
-            // Приводим к единому формату: tel;name;tg_id;email
             normalizedData.add(new String[]{
                     cleanField(tel),
                     cleanField(name),
@@ -192,6 +267,7 @@ public class MainActivity extends AppCompatActivity {
                     cleanField(email)
             });
         }
+
         reader.close();
         return normalizedData;
     }
@@ -208,11 +284,9 @@ public class MainActivity extends AppCompatActivity {
         }
 
         textViewResults.setText("Поиск...");
-
         new Thread(() -> {
             List<String> results = new ArrayList<>();
             File[] files = csvDir.listFiles((dir, name) -> name.endsWith(".csv"));
-
             if (files == null) return;
 
             for (File file : files) {
@@ -221,7 +295,6 @@ public class MainActivity extends AppCompatActivity {
                     while ((line = reader.readLine()) != null) {
                         line = line.trim();
                         if (line.isEmpty()) continue;
-
                         String[] parts = line.split(";", -1);
                         if (parts.length < 4) continue;
 
@@ -250,7 +323,7 @@ public class MainActivity extends AppCompatActivity {
             if (results.isEmpty()) {
                 finalText = "Ничего не найдено по запросу: " + query;
             } else {
-                finalText = String.join("\n\n", results);
+                finalText = String.join("\n", results);
             }
 
             runOnUiThread(() -> textViewResults.setText(finalText));
@@ -258,7 +331,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void copySamplesFromAssets() {
-        // Опционально: скопировать примеры из assets/csv/
-        // Реализуется аналогично предыдущему, если нужно
+        // Опционально: скопировать примеры из папки assets/csv/
+        // Реализуется при необходимости
     }
 }
