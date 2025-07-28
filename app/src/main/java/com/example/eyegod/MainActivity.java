@@ -9,26 +9,37 @@ import androidx.core.content.ContextCompat;
 import android.database.Cursor;
 import android.provider.OpenableColumns;
 import android.Manifest;
+import android.app.AlertDialog;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.OpenableColumns;
 import android.view.View;
 import android.widget.*;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
 
 import java.io.*;
 import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
     private EditText editTextQuery;
     private Button buttonSearch, buttonAddFile, buttonShowFiles;
-    private TextView textViewResults;
+    private TextView textViewResults, textViewVersion;
     private ListView listViewFiles;
     private LinearLayout layoutFileActions;
     private Button buttonDeleteFile, buttonRenameFile, buttonShareFile;
@@ -66,6 +77,7 @@ public class MainActivity extends AppCompatActivity {
         buttonDeleteFile = findViewById(R.id.buttonDeleteFile);
         buttonRenameFile = findViewById(R.id.buttonRenameFile);
         buttonShareFile = findViewById(R.id.buttonShareFile);
+        textViewVersion = findViewById(R.id.textViewVersion); // ✅
 
         csvDir = new File(getExternalFilesDir(null), "csv");
         if (!csvDir.exists()) csvDir.mkdirs();
@@ -88,6 +100,8 @@ public class MainActivity extends AppCompatActivity {
                     .setPositiveButton("Да", (d, w) -> {
                         if (selectedFile.delete()) {
                             Toast.makeText(this, "Файл удалён", Toast.LENGTH_SHORT).show();
+                            selectedFile = null;
+                            layoutFileActions.setVisibility(View.GONE);
                             showFilesList();
                             if (listViewFiles.getAdapter() == null || listViewFiles.getAdapter().getCount() == 0) {
                                 layoutFileActions.setVisibility(View.GONE);
@@ -141,7 +155,19 @@ public class MainActivity extends AppCompatActivity {
             startActivity(Intent.createChooser(shareIntent, "Отправить"));
         });
 
+        setVersionName(); // ✅ Устанавливаем версию
         copySamplesFromAssets();
+    }
+
+    // ✅ Метод для отображения версии
+    private void setVersionName() {
+        try {
+            String versionName = getPackageManager()
+                    .getPackageInfo(getPackageName(), 0).versionName;
+            textViewVersion.setText("Версия: v" + versionName);
+        } catch (Exception e) {
+            textViewVersion.setText("Версия: v1.0.1");
+        }
     }
 
     private void pickFile() {
@@ -187,9 +213,10 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
 
-                mainHandler.post(() ->
-                        Toast.makeText(this, "Файл добавлен: " + outputFile.getName(), Toast.LENGTH_LONG).show()
-                );
+                mainHandler.post(() -> {
+                    Toast.makeText(this, "Файл добавлен: " + outputFile.getName(), Toast.LENGTH_LONG).show();
+                    showFilesList();
+                });
 
             } catch (Exception e) {
                 e.printStackTrace();
@@ -379,6 +406,10 @@ public class MainActivity extends AppCompatActivity {
         File[] files = csvDir.listFiles((dir, name) -> name.endsWith(".csv"));
         if (files == null || files.length == 0) {
             Toast.makeText(this, "Нет файлов", Toast.LENGTH_SHORT).show();
+            listViewFiles.setAdapter(null);
+            listViewFiles.setVisibility(View.GONE);
+            layoutFileActions.setVisibility(View.GONE);
+            selectedFile = null;
             return;
         }
 
@@ -389,11 +420,11 @@ public class MainActivity extends AppCompatActivity {
         listViewFiles.setAdapter(adapter);
         listViewFiles.setVisibility(View.VISIBLE);
         layoutFileActions.setVisibility(View.GONE);
-
         listViewFiles.setOnItemClickListener((p, v, pos, id) -> {
             selectedFile = files[pos];
             layoutFileActions.setVisibility(View.VISIBLE);
         });
+        selectedFile = null;
     }
 
     private void copySamplesFromAssets() {
