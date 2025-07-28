@@ -86,8 +86,20 @@ public class MainActivity extends AppCompatActivity {
     private void pickFile() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("*/*");
-        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"text/csv", "application/csv"});
+
+        // Лучший вариант: используем text/* — покрывает CSV, TXT и другие текстовые форматы
+        intent.setType("text/plain"); // Это самый надёжный MIME-тип для CSV
+
+        // Дополнительно: добавим поддержку других возможных типов
+        String[] mimeTypes = {
+                "text/plain",        // Любой текстовый файл
+                "text/csv",          // Стандартный CSV
+                "application/csv",   // Альтернативный CSV
+                "application/vnd.ms-excel", // Excel, но часто используется для CSV
+                "*/*"                // Fallback — но не обязателен
+        };
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
+
         filePickerLauncher.launch(intent);
     }
 
