@@ -11,7 +11,6 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.DocumentsContract;
-import android.util.Log;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
@@ -43,19 +42,16 @@ public class MainActivity extends AppCompatActivity {
     private Uri csvFolderUri;
 
     private final ActivityResultLauncher<Intent> folderPickerLauncher =
-            registerForActivityResult(
-                    new ActivityResultContracts.StartActivityForResult(),
-                    result -> {
-                        if (result.getResultCode() == RESULT_OK && result.getData() != null) {
-                            Uri treeUri = result.getData().getData();
-                            getContentResolver().takePersistableUriPermission(treeUri,
-                                    Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                            saveCsvFolderUri(treeUri);
-                            Toast.makeText(this, "Папка выбрана", Toast.LENGTH_SHORT).show();
-                            scanAndImportFromUri(treeUri);
-                        }
-                    }
-            );
+            registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+                if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                    Uri treeUri = result.getData().getData();
+                    getContentResolver().takePersistableUriPermission(treeUri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    saveCsvFolderUri(treeUri);
+                    Toast.makeText(this, "Папка сохранена. Сканирую файлы...", Toast.LENGTH_LONG).show();
+                    scanAndImportFromUri(treeUri);
+                }
+            });
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -65,7 +61,6 @@ public class MainActivity extends AppCompatActivity {
         editTextQuery = findViewById(R.id.editTextQuery);
         buttonSearch = findViewById(R.id.buttonSearch);
         buttonSelectFolder = findViewById(R.id.buttonSelectFolder);
-        buttonSelectFolder.setOnClickListener(v -> pickCsvFolder());
         textViewResults = findViewById(R.id.textViewResults);
 
         csvDir = new java.io.File(getExternalFilesDir(null), "csv");
@@ -91,6 +86,18 @@ public class MainActivity extends AppCompatActivity {
         }
         buttonSearch.setOnClickListener(v -> startSearch());
         buttonSelectFolder.setOnClickListener(v -> pickCsvFolder());
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == 100) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                initApp();
+            } else {
+                Toast.makeText(this, "Разрешение на чтение файлов отклонено", Toast.LENGTH_LONG).show();
+            }
+        }
     }
 
     private void pickCsvFolder() {
@@ -126,7 +133,6 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         } catch (Exception e) {
-            Log.e("Eyegod", "Ошибка сканирования папки", e);
             Toast.makeText(this, "Ошибка доступа к папке", Toast.LENGTH_LONG).show();
         }
     }
@@ -146,7 +152,7 @@ public class MainActivity extends AppCompatActivity {
                 );
 
             } catch (Exception e) {
-                Log.e("Eyegod", "Ошибка копирования: " + srcFile.getName(), e);
+                e.printStackTrace();
             }
         }).start();
     }

@@ -15,7 +15,7 @@
         android:id="@+id/editTextQuery"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="Введите имя, телефон, email или Telegram..." />
+        android:hint="Введите запрос..." />
 
     <Button
         android:id="@+id/buttonSearch"
