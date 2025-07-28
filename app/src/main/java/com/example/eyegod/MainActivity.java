@@ -1,4 +1,3 @@
-// MainActivity.java
 package com.example.eyegod;
 
 import android.Manifest;
@@ -11,6 +10,7 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.DocumentsContract;
+import android.util.Log;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
@@ -30,6 +30,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
+
+    private static final String TAG = "Eyegod";
 
     private EditText editTextQuery;
     private Button buttonSearch, buttonSelectFolder;
@@ -60,8 +62,7 @@ public class MainActivity extends AppCompatActivity {
 
         editTextQuery = findViewById(R.id.editTextQuery);
         buttonSearch = findViewById(R.id.buttonSearch);
-        Button buttonSelectFolder = findViewById(R.id.buttonSelectFolder);
-        buttonSelectFolder.setOnClickListener(v -> pickCsvFolder());
+        buttonSelectFolder = findViewById(R.id.buttonSelectFolder);
         textViewResults = findViewById(R.id.textViewResults);
 
         csvDir = new java.io.File(getExternalFilesDir(null), "csv");
@@ -81,30 +82,39 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void initApp() {
+        Log.d(TAG, "Инициализация приложения");
         copyCsvFromAssets();
+
         if (csvFolderUri != null) {
+            Log.d(TAG, "Автозагрузка из папки: " + csvFolderUri.toString());
             scanAndImportFromUri(csvFolderUri);
+        } else {
+            showFolderPickerDialog();
         }
+
         buttonSearch.setOnClickListener(v -> startSearch());
-        buttonSelectFolder.setOnClickListener(v -> pickCsvFolder());
     }
 
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == 100) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                initApp();
-            } else {
-                Toast.makeText(this, "Разрешение на чтение файлов отклонено", Toast.LENGTH_LONG).show();
-            }
-        }
+    private void showFolderPickerDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("Укажите папку с CSV")
+                .setMessage("Выберите папку, где хранятся ваши CSV-файлы.")
+                .setPositiveButton("Выбрать", (d, w) -> pickCsvFolder())
+                .setNegativeButton("Отмена", null)
+                .setNeutralButton("Пропустить", (d, w) -> {})
+                .show();
     }
 
     private void pickCsvFolder() {
+        Log.d(TAG, "Открывается выбор папки");
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        folderPickerLauncher.launch(intent);
+        try {
+            folderPickerLauncher.launch(intent);
+        } catch (Exception e) {
+            Log.e(TAG, "Ошибка при запуске выбора папки", e);
+            Toast.makeText(this, "Не удалось открыть проводник", Toast.LENGTH_LONG).show();
+        }
     }
 
     private void saveCsvFolderUri(Uri uri) {
@@ -112,28 +122,38 @@ public class MainActivity extends AppCompatActivity {
                 .edit()
                 .putString(KEY_CSV_FOLDER_URI, uri.toString())
                 .apply();
+        Log.d(TAG, "URI папки сохранён: " + uri.toString());
     }
 
     private Uri loadCsvFolderUri() {
         String uriString = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .getString(KEY_CSV_FOLDER_URI, null);
+        Log.d(TAG, "Загрузка URI папки: " + uriString);
         return uriString != null ? Uri.parse(uriString) : null;
     }
 
     private void scanAndImportFromUri(Uri treeUri) {
+        Log.d(TAG, "Сканирование папки: " + treeUri);
         try {
             DocumentFile documentDir = DocumentFile.fromTreeUri(this, treeUri);
             if (documentDir != null && documentDir.isDirectory()) {
+                Log.d(TAG, "Найдено файлов: " + documentDir.listFiles().length);
                 for (DocumentFile file : documentDir.listFiles()) {
                     if (file.getName() != null && file.getName().toLowerCase().endsWith(".csv")) {
                         java.io.File destFile = new java.io.File(csvDir, file.getName());
                         if (!destFile.exists()) {
+                            Log.d(TAG, "Импортируется: " + file.getName());
                             normalizeAndCopyDocumentFile(file, destFile);
+                        } else {
+                            Log.d(TAG, "Уже существует: " + file.getName());
                         }
                     }
                 }
+            } else {
+                Log.w(TAG, "Папка не найдена или пуста");
             }
         } catch (Exception e) {
+            Log.e(TAG, "Ошибка при сканировании папки", e);
             Toast.makeText(this, "Ошибка доступа к папке", Toast.LENGTH_LONG).show();
         }
     }
@@ -148,12 +168,16 @@ public class MainActivity extends AppCompatActivity {
                     writer.write(String.join(";", row) + "\n");
                 }
 
-                mainHandler.post(() ->
-                        Toast.makeText(this, "Импортирован: " + srcFile.getName(), Toast.LENGTH_SHORT).show()
-                );
+                mainHandler.post(() -> {
+                    Log.d(TAG, "Файл импортирован: " + srcFile.getName());
+                    Toast.makeText(this, "Импортирован: " + srcFile.getName(), Toast.LENGTH_SHORT).show();
+                });
 
             } catch (Exception e) {
-                e.printStackTrace();
+                Log.e(TAG, "Ошибка при копировании: " + srcFile.getName(), e);
+                mainHandler.post(() ->
+                        Toast.makeText(this, "Ошибка: " + e.getMessage(), Toast.LENGTH_LONG).show()
+                );
             }
         }).start();
     }
@@ -165,7 +189,10 @@ public class MainActivity extends AppCompatActivity {
                 for (String filename : files) {
                     InputStream in = getAssets().open("csv/" + filename);
                     java.io.File outFile = new java.io.File(csvDir, filename);
-                    if (outFile.exists()) continue;
+                    if (outFile.exists()) {
+                        in.close();
+                        continue;
+                    }
                     FileOutputStream out = new FileOutputStream(outFile);
                     byte[] buffer = new byte[1024];
                     int read;
@@ -174,10 +201,12 @@ public class MainActivity extends AppCompatActivity {
                     }
                     in.close();
                     out.close();
+                    Log.d(TAG, "Копирован из assets: " + filename);
                 }
             }
         } catch (IOException e) {
-            Toast.makeText(this, "Ошибка из assets: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Log.e(TAG, "Ошибка копирования из assets", e);
+            Toast.makeText(this, "Ошибка копирования из assets: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -235,6 +264,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startSearch() {
+        Log.d(TAG, "Поиск запущен");
         String query = editTextQuery.getText().toString().trim().toLowerCase();
         if (query.isEmpty()) {
             runOnUiThread(() -> textViewResults.setText("Введите запрос."));
@@ -246,6 +276,8 @@ public class MainActivity extends AppCompatActivity {
         new Thread(() -> {
             List<String> results = new ArrayList<>();
             java.io.File[] files = csvDir.listFiles((dir, name) -> name.endsWith(".csv"));
+
+            Log.d(TAG, "Поиск по " + (files != null ? files.length : 0) + " файлам");
 
             if (files != null) {
                 for (java.io.File file : files) {
@@ -265,6 +297,7 @@ public class MainActivity extends AppCompatActivity {
 
                             String searchable = (tel + name + tgId + email).toLowerCase();
                             if (searchable.contains(query)) {
+                                Log.d(TAG, "Найдено в файле: " + file.getName());
                                 StringBuilder result = new StringBuilder();
                                 result.append("База: ").append(file.getName()).append("\n");
                                 result.append("ФИО: ").append(name.isEmpty() ? "отсутствует" : name).append("\n");
@@ -275,6 +308,7 @@ public class MainActivity extends AppCompatActivity {
                             }
                         }
                     } catch (IOException e) {
+                        Log.e(TAG, "Ошибка чтения файла: " + file.getName(), e);
                         results.add("Ошибка: " + file.getName());
                     }
                 }
@@ -284,7 +318,10 @@ public class MainActivity extends AppCompatActivity {
                     ? "Ничего не найдено по запросу: " + query
                     : String.join("\n\n", results);
 
-            runOnUiThread(() -> textViewResults.setText(finalText));
+            runOnUiThread(() -> {
+                textViewResults.setText(finalText);
+                Log.d(TAG, "Результаты выведены: " + results.size() + " совпадений");
+            });
         }).start();
     }
 }
