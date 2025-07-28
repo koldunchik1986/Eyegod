@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace 'com.example.eyegod'  // 🔴 Обязательно!
-    compileSdk 36  // Повысили до 36 (из-за ошибки в логе)
+    compileSdk 34  // Повысили до 36 (из-за ошибки в логе)
 
     defaultConfig {
         applicationId "com.example.eyegod"
@@ -22,6 +22,7 @@ android {
 
     buildFeatures {
         viewBinding true
+        dataBinding false
     }
 }
 

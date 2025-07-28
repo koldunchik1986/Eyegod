@@ -265,54 +265,36 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startSearch() {
-        // Запускаем в фоновом потоке
+        // Получаем запрос ВНЕ фонового потока
+        String query = editTextQuery.getText().toString().trim().toLowerCase();
+        if (query.isEmpty()) {
+            runOnUiThread(() -> textViewResults.setText("Введите запрос."));
+            return;
+        }
+
+        textViewResults.setText("Поиск...");
+
         new Thread(() -> {
-            try {
-                // Получаем текст запроса
-                String query = runOnUiThreadResult(() -> editTextQuery.getText().toString().trim());
+            List<String> results = new ArrayList<>();
+            java.io.File[] files = csvDir.listFiles((dir, name) -> name.endsWith(".csv"));
 
-                // Проверяем запрос
-                if (query.isEmpty()) {
-                    runOnUiThread(() -> textViewResults.setText("Введите запрос для поиска"));
-                    return;
-                }
-
-                // Приводим к нижнему регистру для поиска
-                query = query.toLowerCase();
-
-                // Список для результатов
-                List<String> results = new ArrayList<>();
-
-                // Получаем все CSV-файлы
-                File[] files = csvDir.listFiles((dir, name) -> name.toLowerCase().endsWith(".csv"));
-
-                if (files == null || files.length == 0) {
-                    runOnUiThread(() -> textViewResults.setText("Нет CSV-файлов для поиска"));
-                    return;
-                }
-
-                // Перебираем файлы
-                for (File file : files) {
+            if (files != null) {
+                for (java.io.File file : files) {
                     try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file)))) {
                         String line;
                         while ((line = reader.readLine()) != null) {
                             line = line.trim();
                             if (line.isEmpty()) continue;
 
-                            // Разделяем по ;
                             String[] parts = line.split(";", -1);
-                            if (parts.length < 4) continue; // Пропускаем некорректные
+                            if (parts.length < 4) continue;
 
-                            // Извлекаем поля
                             String tel = cleanField(parts[0]);
                             String name = cleanField(parts[1]);
                             String tgId = cleanField(parts[2]);
                             String email = cleanField(parts[3]);
 
-                            // Объединяем для поиска
                             String searchable = (tel + name + tgId + email).toLowerCase();
-
-                            // Если есть совпадение
                             if (searchable.contains(query)) {
                                 StringBuilder result = new StringBuilder();
                                 result.append("База: ").append(file.getName()).append("\n");
@@ -323,27 +305,17 @@ public class MainActivity extends AppCompatActivity {
                                 results.add(result.toString());
                             }
                         }
-                    } catch (Exception e) {
-                        // Логируем ошибку чтения файла
-                        Log.e("Eyegod", "Ошибка чтения файла: " + file.getName(), e);
+                    } catch (IOException e) {
+                        results.add("Ошибка: " + file.getName());
                     }
                 }
-
-                // Формируем итоговый текст
-                String finalText;
-                if (results.isEmpty()) {
-                    finalText = "Ничего не найдено по запросу: " + query;
-                } else {
-                    finalText = String.join("\n\n", results); // Два переноса между результатами
-                }
-
-                // Выводим результат в UI
-                runOnUiThread(() -> textViewResults.setText(finalText));
-
-            } catch (Exception e) {
-                Log.e("Eyegod", "Ошибка в поиске", e);
-                runOnUiThread(() -> textViewResults.setText("Ошибка поиска: " + e.getMessage()));
             }
+
+            String finalText = results.isEmpty()
+                    ? "Ничего не найдено по запросу: " + query
+                    : String.join("\n\n", results); // ✅ \n, а не " "
+
+            runOnUiThread(() -> textViewResults.setText(finalText));
         }).start();
     }
     private String runOnUiThreadResult(java.util.function.Supplier<String> supplier) {
