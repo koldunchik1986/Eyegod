@@ -60,7 +60,8 @@ public class MainActivity extends AppCompatActivity {
 
         editTextQuery = findViewById(R.id.editTextQuery);
         buttonSearch = findViewById(R.id.buttonSearch);
-        buttonSelectFolder = findViewById(R.id.buttonSelectFolder);
+        Button buttonSelectFolder = findViewById(R.id.buttonSelectFolder);
+        buttonSelectFolder.setOnClickListener(v -> pickCsvFolder());
         textViewResults = findViewById(R.id.textViewResults);
 
         csvDir = new java.io.File(getExternalFilesDir(null), "csv");
