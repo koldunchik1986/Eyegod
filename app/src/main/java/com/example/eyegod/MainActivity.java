@@ -1,45 +1,43 @@
 package com.example.eyegod;
 
 import androidx.appcompat.app.AppCompatActivity;
-import android.Manifest;
-import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.database.Cursor;
-import android.net.Uri;
-import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
-import android.provider.OpenableColumns;
-import android.view.View;
-import android.widget.Button;
-import android.widget.EditText;
-import android.widget.TextView;
-import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.util.ArrayList;
-import java.util.List;
+
+import android.database.Cursor;
+import android.provider.OpenableColumns;
+import android.Manifest;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.View;
+import android.widget.*;
+import android.app.AlertDialog;
+import android.content.DialogInterface;
+
+import androidx.core.content.FileProvider;
+
+import java.io.*;
+import java.util.*;
 
 public class MainActivity extends AppCompatActivity {
     private EditText editTextQuery;
-    private Button buttonSearch, buttonAddFile;
+    private Button buttonSearch, buttonAddFile, buttonShowFiles;
     private TextView textViewResults;
+    private ListView listViewFiles;
+    private LinearLayout layoutFileActions;
+    private Button buttonDeleteFile, buttonRenameFile, buttonShareFile;
     private static final int REQUEST_CODE_PERMISSION = 100;
     private File csvDir;
     private Handler mainHandler = new Handler(Looper.getMainLooper());
-    private Uri lastPickedUri; // Для временного хранения URI выбранного файла
+    private Uri lastPickedUri;
+    private File selectedFile = null;
 
-    // Для выбора файла
     private final ActivityResultLauncher<Intent> filePickerLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
             result -> {
@@ -62,11 +60,16 @@ public class MainActivity extends AppCompatActivity {
         buttonSearch = findViewById(R.id.buttonSearch);
         buttonAddFile = findViewById(R.id.buttonAddFile);
         textViewResults = findViewById(R.id.textViewResults);
+        buttonShowFiles = findViewById(R.id.buttonShowFiles);
+        listViewFiles = findViewById(R.id.listViewFiles);
+        layoutFileActions = findViewById(R.id.layoutFileActions);
+        buttonDeleteFile = findViewById(R.id.buttonDeleteFile);
+        buttonRenameFile = findViewById(R.id.buttonRenameFile);
+        buttonShareFile = findViewById(R.id.buttonShareFile);
 
         csvDir = new File(getExternalFilesDir(null), "csv");
         if (!csvDir.exists()) csvDir.mkdirs();
 
-        // Проверка разрешений (опционально для ACTION_OPEN_DOCUMENT)
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
                 != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this,
@@ -75,8 +78,69 @@ public class MainActivity extends AppCompatActivity {
 
         buttonSearch.setOnClickListener(v -> startSearch());
         buttonAddFile.setOnClickListener(v -> pickFile());
+        buttonShowFiles.setOnClickListener(v -> showFilesList());
 
-        // Копируем примеры из assets при первом запуске (если нужно)
+        buttonDeleteFile.setOnClickListener(v -> {
+            if (selectedFile == null) return;
+            new AlertDialog.Builder(this)
+                    .setTitle("Удалить файл")
+                    .setMessage("Удалить файл:\n" + selectedFile.getName() + "?")
+                    .setPositiveButton("Да", (d, w) -> {
+                        if (selectedFile.delete()) {
+                            Toast.makeText(this, "Файл удалён", Toast.LENGTH_SHORT).show();
+                            showFilesList();
+                            if (listViewFiles.getAdapter() == null || listViewFiles.getAdapter().getCount() == 0) {
+                                layoutFileActions.setVisibility(View.GONE);
+                                listViewFiles.setVisibility(View.GONE);
+                            }
+                        } else {
+                            Toast.makeText(this, "Ошибка при удалении", Toast.LENGTH_SHORT).show();
+                        }
+                    })
+                    .setNegativeButton("Нет", null)
+                    .show();
+        });
+
+        buttonRenameFile.setOnClickListener(v -> {
+            if (selectedFile == null) return;
+            AlertDialog.Builder builder = new AlertDialog.Builder(this);
+            builder.setTitle("Переименовать");
+            final EditText input = new EditText(this);
+            input.setText(selectedFile.getName());
+            builder.setView(input);
+            builder.setPositiveButton("OK", (d, w) -> {
+                String newName = input.getText().toString().trim();
+                if (newName.isEmpty() || !newName.toLowerCase().endsWith(".csv")) {
+                    Toast.makeText(this, "Введите имя с .csv", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                File newFile = new File(csvDir, newName);
+                if (newFile.exists()) {
+                    Toast.makeText(this, "Файл уже существует", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                if (selectedFile.renameTo(newFile)) {
+                    Toast.makeText(this, "Переименован", Toast.LENGTH_SHORT).show();
+                    selectedFile = newFile;
+                    showFilesList();
+                } else {
+                    Toast.makeText(this, "Ошибка", Toast.LENGTH_SHORT).show();
+                }
+            });
+            builder.setNegativeButton("Отмена", null);
+            builder.show();
+        });
+
+        buttonShareFile.setOnClickListener(v -> {
+            if (selectedFile == null) return;
+            Uri fileUri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", selectedFile);
+            Intent shareIntent = new Intent(Intent.ACTION_SEND);
+            shareIntent.setType("text/csv");
+            shareIntent.putExtra(Intent.EXTRA_STREAM, fileUri);
+            shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(shareIntent, "Отправить"));
+        });
+
         copySamplesFromAssets();
     }
 
@@ -84,13 +148,7 @@ public class MainActivity extends AppCompatActivity {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("text/plain");
-        String[] mimeTypes = {
-                "text/plain",
-                "text/csv",
-                "application/csv",
-                "application/vnd.ms-excel",
-                "*/*"
-        };
+        String[] mimeTypes = {"text/plain", "text/csv", "application/csv", "application/vnd.ms-excel", "*/*"};
         intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
         filePickerLauncher.launch(intent);
     }
@@ -109,23 +167,20 @@ public class MainActivity extends AppCompatActivity {
                 List<String[]> records = parseInputCSV(inputStream);
                 inputStream.close();
 
-                // Получаем оригинальное имя файла
                 String fileName = getFileName(uri);
-                if (fileName == null || fileName.isEmpty() || !fileName.toLowerCase().endsWith(".csv")) {
+                if (fileName == null || fileName.isEmpty()) {
                     fileName = "imported_file.csv";
                 }
 
-                // Проверяем уникальность имени и содержимого
                 File outputFile = getUniqueFileForSave(fileName);
                 if (outputFile == null) {
-                    final String finalFileName = fileName; // <-- Копия, которая effectively final
+                    final String finalFileName = fileName;
                     mainHandler.post(() ->
                             Toast.makeText(this, "Файл уже добавлен: " + finalFileName, Toast.LENGTH_SHORT).show()
                     );
                     return;
                 }
 
-                // Сохраняем нормализованные данные
                 try (OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(outputFile))) {
                     for (String[] row : records) {
                         writer.write(String.join(";", row) + "\n");
@@ -145,7 +200,6 @@ public class MainActivity extends AppCompatActivity {
         }).start();
     }
 
-    // Получить оригинальное имя файла из URI
     private String getFileName(Uri uri) {
         String result = null;
         try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
@@ -164,7 +218,6 @@ public class MainActivity extends AppCompatActivity {
         return result;
     }
 
-    // Генерация уникального имени файла с учётом содержимого
     private File getUniqueFileForSave(String originalFileName) {
         if (!originalFileName.toLowerCase().endsWith(".csv")) {
             originalFileName += ".csv";
@@ -174,16 +227,14 @@ public class MainActivity extends AppCompatActivity {
         String baseName = originalFileName.substring(0, originalFileName.length() - 4);
         int counter = 1;
 
-        while (targetFile.exists()) {
-            try {
-                InputStream newStream = getContentResolver().openInputStream(lastPickedUri);
-                if (newStream != null && filesContentEquals(targetFile, newStream)) {
-                    return null; // Файлы идентичны — не сохраняем
-                }
-            } catch (IOException e) {
-                // Ошибка при сравнении — продолжаем с новым именем
-            }
+        List<String> newContent = getNormalizedContent(lastPickedUri);
+        if (newContent == null) return targetFile;
 
+        while (targetFile.exists()) {
+            List<String> existingContent = getFileContent(targetFile);
+            if (existingContent != null && isContentEqual(existingContent, newContent)) {
+                return null;
+            }
             targetFile = new File(csvDir, baseName + "_" + counter + ".csv");
             counter++;
         }
@@ -191,43 +242,56 @@ public class MainActivity extends AppCompatActivity {
         return targetFile;
     }
 
-    // Сравнение содержимого двух файлов
-    private boolean filesContentEquals(File file, InputStream inputStream) throws IOException {
-        if (!file.exists()) return false;
-
-        try (FileInputStream fis = new FileInputStream(file);
-             BufferedReader reader1 = new BufferedReader(new InputStreamReader(fis));
-             BufferedReader reader2 = new BufferedReader(new InputStreamReader(inputStream))) {
-
-            String line1, line2 = null;
-            while ((line1 = reader1.readLine()) != null) {
-                line2 = reader2.readLine();
-                if (line1.trim().equals(line2 == null ? "" : line2.trim())) {
-                    continue;
-                } else {
-                    return false;
-                }
+    private List<String> getNormalizedContent(Uri uri) {
+        try (InputStream is = getContentResolver().openInputStream(uri)) {
+            if (is == null) return null;
+            List<String[]> records = parseInputCSV(is);
+            List<String> content = new ArrayList<>();
+            for (String[] row : records) {
+                content.add(String.join(";", row));
             }
-            return line2 == null;
+            return content;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
         }
     }
 
-    // Парсинг CSV: определяем разделитель и нормализуем порядок полей
+    private List<String> getFileContent(File file) {
+        List<String> content = new ArrayList<>();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file)))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                content.add(line.trim());
+            }
+        } catch (IOException e) {
+            return null;
+        }
+        return content;
+    }
+
+    private boolean isContentEqual(List<String> list1, List<String> list2) {
+        if (list1.size() != list2.size()) return false;
+        for (int i = 0; i < list1.size(); i++) {
+            if (!list1.get(i).equals(list2.get(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private List<String[]> parseInputCSV(InputStream inputStream) throws IOException {
         BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
         List<String[]> normalizedData = new ArrayList<>();
         String line;
-
         while ((line = reader.readLine()) != null) {
             line = line.trim();
             if (line.isEmpty()) continue;
-
             String delimiter = line.contains(";") ? ";" : "\\|";
             String[] parts = line.split(delimiter, -1);
             if (parts.length != 4) continue;
 
             String tel = "", name = "", tgId = "", email = "";
-
             for (String field : parts) {
                 field = field.trim();
                 if (field.matches(".*[а-яА-Яa-zA-Z]{2,}.*") && !field.contains("@") && !field.contains("+") && !field.matches(".*\\d.*")) {
@@ -243,20 +307,11 @@ public class MainActivity extends AppCompatActivity {
 
             if (name.isEmpty() || tel.isEmpty() || email.isEmpty() || tgId.isEmpty()) {
                 if (line.contains("tel") || line.contains("phone") || parts[0].matches(".*\\d.*")) {
-                    tel = parts[0].trim();
-                    email = parts[1].trim();
-                    tgId = parts[2].trim();
-                    name = parts[3].trim();
+                    tel = parts[0].trim(); email = parts[1].trim(); tgId = parts[2].trim(); name = parts[3].trim();
                 } else if (line.contains("tg") || parts[0].startsWith("@")) {
-                    tgId = parts[0].trim();
-                    email = parts[1].trim();
-                    name = parts[2].trim();
-                    tel = parts[3].trim();
+                    tgId = parts[0].trim(); email = parts[1].trim(); name = parts[2].trim(); tel = parts[3].trim();
                 } else {
-                    tel = parts[0];
-                    name = parts[1];
-                    tgId = parts[2];
-                    email = parts[3];
+                    tel = parts[0]; name = parts[1]; tgId = parts[2]; email = parts[3];
                 }
             }
 
@@ -267,7 +322,6 @@ public class MainActivity extends AppCompatActivity {
                     cleanField(email)
             });
         }
-
         reader.close();
         return normalizedData;
     }
@@ -282,13 +336,11 @@ public class MainActivity extends AppCompatActivity {
             runOnUiThread(() -> textViewResults.setText("Введите запрос."));
             return;
         }
-
         textViewResults.setText("Поиск...");
         new Thread(() -> {
             List<String> results = new ArrayList<>();
             File[] files = csvDir.listFiles((dir, name) -> name.endsWith(".csv"));
             if (files == null) return;
-
             for (File file : files) {
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file)))) {
                     String line;
@@ -297,12 +349,10 @@ public class MainActivity extends AppCompatActivity {
                         if (line.isEmpty()) continue;
                         String[] parts = line.split(";", -1);
                         if (parts.length < 4) continue;
-
                         String tel = cleanField(parts[0]);
                         String name = cleanField(parts[1]);
                         String tgId = cleanField(parts[2]);
                         String email = cleanField(parts[3]);
-
                         String searchable = (tel + name + tgId + email).toLowerCase();
                         if (searchable.contains(query)) {
                             StringBuilder result = new StringBuilder();
@@ -318,20 +368,35 @@ public class MainActivity extends AppCompatActivity {
                     results.add("Ошибка чтения: " + file.getName());
                 }
             }
-
-            String finalText;
-            if (results.isEmpty()) {
-                finalText = "Ничего не найдено по запросу: " + query;
-            } else {
-                finalText = String.join("\n", results);
-            }
-
+            String finalText = results.isEmpty() ?
+                    "Ничего не найдено: " + query :
+                    String.join("\n", results);
             runOnUiThread(() -> textViewResults.setText(finalText));
         }).start();
     }
 
+    private void showFilesList() {
+        File[] files = csvDir.listFiles((dir, name) -> name.endsWith(".csv"));
+        if (files == null || files.length == 0) {
+            Toast.makeText(this, "Нет файлов", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        List<String> fileNames = new ArrayList<>();
+        for (File f : files) fileNames.add(f.getName());
+
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, fileNames);
+        listViewFiles.setAdapter(adapter);
+        listViewFiles.setVisibility(View.VISIBLE);
+        layoutFileActions.setVisibility(View.GONE);
+
+        listViewFiles.setOnItemClickListener((p, v, pos, id) -> {
+            selectedFile = files[pos];
+            layoutFileActions.setVisibility(View.VISIBLE);
+        });
+    }
+
     private void copySamplesFromAssets() {
-        // Опционально: скопировать примеры из папки assets/csv/
-        // Реализуется при необходимости
+        // Опционально
     }
 }

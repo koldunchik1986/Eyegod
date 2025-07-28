@@ -5,24 +5,75 @@
     android:orientation="vertical"
     android:padding="16dp">
 
+    <!-- Кнопка добавить CSV -->
     <Button
         android:id="@+id/buttonAddFile"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Добавить CSV-файл" />
 
+    <!-- Поле ввода запроса -->
     <EditText
         android:id="@+id/editTextQuery"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:hint="Введите запрос..." />
 
+    <!-- Кнопка Поиск -->
     <Button
         android:id="@+id/buttonSearch"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Поиск" />
 
+    <!-- Кнопка Управление файлами -->
+    <Button
+        android:id="@+id/buttonShowFiles"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="Управление файлами" />
+
+    <!-- Список файлов -->
+    <ListView
+        android:id="@+id/listViewFiles"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:visibility="gone" />
+
+    <!-- Панель действий (Удалить, Переименовать, Отправить) -->
+    <LinearLayout
+        android:id="@+id/layoutFileActions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp"
+        android:visibility="gone">
+
+        <Button
+            android:id="@+id/buttonDeleteFile"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Удалить" />
+
+        <Button
+            android:id="@+id/buttonRenameFile"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Переименовать" />
+
+        <Button
+            android:id="@+id/buttonShareFile"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Отправить" />
+    </LinearLayout>
+
+    <!-- Результаты поиска -->
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="match_parent"
@@ -37,7 +88,6 @@
             android:scrollbars="vertical"
             android:maxLines="1000"
             android:ellipsize="end" />
-
     </ScrollView>
 
 </LinearLayout>
