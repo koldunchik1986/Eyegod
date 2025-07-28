@@ -43,16 +43,19 @@ public class MainActivity extends AppCompatActivity {
     private Uri csvFolderUri;
 
     private final ActivityResultLauncher<Intent> folderPickerLauncher =
-            registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
-                if (result.getResultCode() == RESULT_OK && result.getData() != null) {
-                    Uri treeUri = result.getData().getData();
-                    getContentResolver().takePersistableUriPermission(treeUri,
-                            Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                    saveCsvFolderUri(treeUri);
-                    Toast.makeText(this, "Папка сохранена. Сканирую файлы...", Toast.LENGTH_LONG).show();
-                    scanAndImportFromUri(treeUri);
-                }
-            });
+            registerForActivityResult(
+                    new ActivityResultContracts.StartActivityForResult(),
+                    result -> {
+                        if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                            Uri treeUri = result.getData().getData();
+                            getContentResolver().takePersistableUriPermission(treeUri,
+                                    Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                            saveCsvFolderUri(treeUri);
+                            Toast.makeText(this, "Папка выбрана", Toast.LENGTH_SHORT).show();
+                            scanAndImportFromUri(treeUri);
+                        }
+                    }
+            );
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -62,6 +65,7 @@ public class MainActivity extends AppCompatActivity {
         editTextQuery = findViewById(R.id.editTextQuery);
         buttonSearch = findViewById(R.id.buttonSearch);
         buttonSelectFolder = findViewById(R.id.buttonSelectFolder);
+        buttonSelectFolder.setOnClickListener(v -> pickCsvFolder());
         textViewResults = findViewById(R.id.textViewResults);
 
         csvDir = new java.io.File(getExternalFilesDir(null), "csv");
