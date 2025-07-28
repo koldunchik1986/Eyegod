@@ -6,10 +6,10 @@
     android:padding="16dp">
 
     <Button
-        android:id="@+id/buttonSelectFolder"
+        android:id="@+id/buttonAddFile"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Выбрать папку с CSV" />
+        android:text="Добавить CSV-файл" />
 
     <EditText
         android:id="@+id/editTextQuery"
