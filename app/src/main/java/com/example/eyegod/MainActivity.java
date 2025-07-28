@@ -1,15 +1,17 @@
+// MainActivity.java
 package com.example.eyegod;
-
-import androidx.appcompat.app.AppCompatActivity;
 
 import android.Manifest;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
-import android.view.View;
+import android.provider.DocumentsContract;
+import android.util.Log;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
@@ -17,8 +19,12 @@ import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+
+import androidx.documentfile.provider.DocumentFile;
 
 import java.io.*;
 import java.util.ArrayList;
@@ -27,22 +33,26 @@ import java.util.List;
 public class MainActivity extends AppCompatActivity {
 
     private EditText editTextQuery;
-    private Button buttonSearch, buttonAddFile;
+    private Button buttonSearch, buttonSelectFolder;
     private TextView textViewResults;
-    private File csvDir;
+    private java.io.File csvDir;
     private Handler mainHandler = new Handler(Looper.getMainLooper());
 
-private final ActivityResultLauncher<Intent> filePickerLauncher = registerForActivityResult(
-    new ActivityResultContracts.StartActivityForResult(),
-    result -> {
-        if (result.getResultCode() == RESULT_OK && result.getData() != null) {
-            Uri uri = result.getData().getData();
-            if (uri != null) {
-                importAndNormalizeCSV(uri);
-            }
-        }
-    }
-);
+    private static final String PREFS_NAME = "EyegodPrefs";
+    private static final String KEY_CSV_FOLDER_URI = "csv_folder_uri";
+    private Uri csvFolderUri;
+
+    private final ActivityResultLauncher<Intent> folderPickerLauncher =
+            registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+                if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                    Uri treeUri = result.getData().getData();
+                    getContentResolver().takePersistableUriPermission(treeUri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    saveCsvFolderUri(treeUri);
+                    Toast.makeText(this, "Папка сохранена. Сканирую файлы...", Toast.LENGTH_LONG).show();
+                    scanAndImportFromUri(treeUri);
+                }
+            });
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,124 +61,113 @@ private final ActivityResultLauncher<Intent> filePickerLauncher = registerForAct
 
         editTextQuery = findViewById(R.id.editTextQuery);
         buttonSearch = findViewById(R.id.buttonSearch);
-        buttonAddFile = findViewById(R.id.buttonAddFile);
+        buttonSelectFolder = findViewById(R.id.buttonSelectFolder);
         textViewResults = findViewById(R.id.textViewResults);
 
-        csvDir = new File(getExternalFilesDir(null), "csv");
-        File csvDir = new File(getExternalFilesDir(null), "csv");
+        csvDir = new java.io.File(getExternalFilesDir(null), "csv");
         if (!csvDir.exists()) {
             csvDir.mkdirs();
-            copyCsvFromAssets(); // Добавь этот метод
+        }
+
+        csvFolderUri = loadCsvFolderUri();
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
                 != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this,
                     new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, 100);
+        } else {
+            initApp();
         }
+    }
 
+    private void initApp() {
+        copyCsvFromAssets();
+        if (csvFolderUri != null) {
+            scanAndImportFromUri(csvFolderUri);
+        }
         buttonSearch.setOnClickListener(v -> startSearch());
-        buttonAddFile.setOnClickListener(v -> pickFile());
+        buttonSelectFolder.setOnClickListener(v -> pickCsvFolder());
     }
-        private void copyCsvFromAssets() {
-            AssetManager assetManager = getAssets();
-            try {
-                String[] files = assetManager.list("csv");
-                if (files != null) {
-                    for (String filename : files) {
-                        InputStream in = assetManager.open("csv/" + filename);
-                        File outFile = new File(getExternalFilesDir("csv"), filename);
-                        FileOutputStream out = new FileOutputStream(outFile);
-                        byte[] buffer = new byte[1024];
-                        int read;
-                        while ((read = in.read(buffer)) != -1) {
-                            out.write(buffer, 0, read);
+
+    private void pickCsvFolder() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        folderPickerLauncher.launch(intent);
+    }
+
+    private void saveCsvFolderUri(Uri uri) {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit()
+                .putString(KEY_CSV_FOLDER_URI, uri.toString())
+                .apply();
+    }
+
+    private Uri loadCsvFolderUri() {
+        String uriString = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getString(KEY_CSV_FOLDER_URI, null);
+        return uriString != null ? Uri.parse(uriString) : null;
+    }
+
+    private void scanAndImportFromUri(Uri treeUri) {
+        try {
+            DocumentFile documentDir = DocumentFile.fromTreeUri(this, treeUri);
+            if (documentDir != null && documentDir.isDirectory()) {
+                for (DocumentFile file : documentDir.listFiles()) {
+                    if (file.getName() != null && file.getName().toLowerCase().endsWith(".csv")) {
+                        java.io.File destFile = new java.io.File(csvDir, file.getName());
+                        if (!destFile.exists()) {
+                            normalizeAndCopyDocumentFile(file, destFile);
                         }
-                        in.close();
-                        out.close();
                     }
                 }
-            } catch (IOException e) {
-                Toast.makeText(this, "Ошибка копирования: " + e.getMessage(), Toast.LENGTH_LONG).show();
             }
+        } catch (Exception e) {
+            Log.e("Eyegod", "Ошибка сканирования папки", e);
+            Toast.makeText(this, "Ошибка доступа к папке", Toast.LENGTH_LONG).show();
         }
-
-    private void pickFile() {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        // УДАЛИТЬ: intent.setType("*/*");
-
-        // Вместо этого — указать точные MIME-типы
-        String[] mimeTypes = {"text/csv", "application/csv", "text/plain"};
-        intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
-        intent.setType("text/csv"); // Это сработает как "фильтр по умолчанию"
-
-        filePickerLauncher.launch(intent);
     }
 
-    private void importAndNormalizeCSV(Uri uri) {
+    private void normalizeAndCopyDocumentFile(DocumentFile srcFile, java.io.File destFile) {
         new Thread(() -> {
-            try {
-                String fileName = getFileName(uri);
-                if (fileName == null || fileName.isEmpty()) {
-                    fileName = "imported_" + System.currentTimeMillis() + ".csv";
-                }
-                if (!fileName.toLowerCase().endsWith(".csv")) {
-                    fileName += ".csv";
-                }
+            try (InputStream in = getContentResolver().openInputStream(srcFile.getUri());
+                 OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(destFile))) {
 
-                File targetFile = new File(csvDir, fileName);
-                File finalFile = getUniqueFile(targetFile);
-
-                InputStream inputStream = getContentResolver().openInputStream(uri);
-                List<String[]> records = parseInputCSV(inputStream);
-                inputStream.close();
-
-                try (OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(finalFile))) {
-                    for (String[] row : records) {
-                        writer.write(String.join(";", row) + "\n");
-                    }
+                List<String[]> records = parseInputCSV(in);
+                for (String[] row : records) {
+                    writer.write(String.join(";", row) + "\n");
                 }
 
                 mainHandler.post(() ->
-                    Toast.makeText(this, "Файл добавлен: " + finalFile.getName(), Toast.LENGTH_LONG).show()
+                        Toast.makeText(this, "Импортирован: " + srcFile.getName(), Toast.LENGTH_SHORT).show()
                 );
 
             } catch (Exception e) {
-                mainHandler.post(() ->
-                    Toast.makeText(this, "Ошибка: " + e.getMessage(), Toast.LENGTH_LONG).show()
-                );
+                Log.e("Eyegod", "Ошибка копирования: " + srcFile.getName(), e);
             }
         }).start();
     }
 
-    private String getFileName(Uri uri) {
-        String fileName = null;
+    private void copyCsvFromAssets() {
         try {
-            String[] projection = {android.provider.MediaStore.MediaColumns.DISPLAY_NAME};
-            android.database.Cursor cursor = getContentResolver().query(uri, projection, null, null, null);
-            if (cursor != null && cursor.moveToFirst()) {
-                int nameIndex = cursor.getColumnIndex(android.provider.MediaStore.MediaColumns.DISPLAY_NAME);
-                if (nameIndex != -1) {
-                    fileName = cursor.getString(nameIndex);
+            String[] files = getAssets().list("csv");
+            if (files != null) {
+                for (String filename : files) {
+                    InputStream in = getAssets().open("csv/" + filename);
+                    java.io.File outFile = new java.io.File(csvDir, filename);
+                    if (outFile.exists()) continue;
+                    FileOutputStream out = new FileOutputStream(outFile);
+                    byte[] buffer = new byte[1024];
+                    int read;
+                    while ((read = in.read(buffer)) != -1) {
+                        out.write(buffer, 0, read);
+                    }
+                    in.close();
+                    out.close();
                 }
-                cursor.close();
             }
-        } catch (Exception e) { }
-        return fileName;
-    }
-
-    private File getUniqueFile(File file) {
-        File parent = file.getParentFile();
-        String name = file.getName();
-        String nameWithoutExt = name.substring(0, name.lastIndexOf('.'));
-        String ext = name.substring(name.lastIndexOf('.'));
-        int counter = 1;
-        File newFile = file;
-        while (newFile.exists()) {
-            newFile = new File(parent, nameWithoutExt + "_" + counter + ext);
-            counter++;
+        } catch (IOException e) {
+            Toast.makeText(this, "Ошибка из assets: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
-        return newFile;
     }
 
     private List<String[]> parseInputCSV(InputStream inputStream) throws IOException {
@@ -210,10 +209,10 @@ private final ActivityResultLauncher<Intent> filePickerLauncher = registerForAct
             }
 
             normalizedData.add(new String[]{
-                cleanField(tel),
-                cleanField(name),
-                cleanField(tgId),
-                cleanField(email)
+                    cleanField(tel),
+                    cleanField(name),
+                    cleanField(tgId),
+                    cleanField(email)
             });
         }
         reader.close();
@@ -235,10 +234,10 @@ private final ActivityResultLauncher<Intent> filePickerLauncher = registerForAct
 
         new Thread(() -> {
             List<String> results = new ArrayList<>();
-            File[] files = csvDir.listFiles((dir, name) -> name.endsWith(".csv"));
+            java.io.File[] files = csvDir.listFiles((dir, name) -> name.endsWith(".csv"));
 
             if (files != null) {
-                for (File file : files) {
+                for (java.io.File file : files) {
                     try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file)))) {
                         String line;
                         while ((line = reader.readLine()) != null) {
@@ -271,8 +270,8 @@ private final ActivityResultLauncher<Intent> filePickerLauncher = registerForAct
             }
 
             String finalText = results.isEmpty()
-                ? "Ничего не найдено по запросу: " + query
-                : String.join("\n\n", results);
+                    ? "Ничего не найдено по запросу: " + query
+                    : String.join("\n\n", results);
 
             runOnUiThread(() -> textViewResults.setText(finalText));
         }).start();

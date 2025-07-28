@@ -1,14 +1,7 @@
-<?xml version="1.0" encoding="utf-8"?>
 <resources>
-
-    <!-- Основная тема приложения -->
     <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
-        <!-- Цвет основной панели (action bar) -->
-        <item name="colorPrimary">@color/colorPrimary</item>
-        <!-- Цвет статус-бара -->
-        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
-        <!-- Цвет акцентных элементов (кнопки, чекбоксы) -->
-        <item name="colorAccent">@color/colorAccent</item>
+        <item name="colorPrimary">#008577</item>
+        <item name="colorPrimaryDark">#00574B</item>
+        <item name="colorAccent">#D81B60</item>
     </style>
-
 </resources>
