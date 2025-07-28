@@ -1,0 +1,35 @@
+plugins {
+    id 'com.android.application'
+    // Убрали Kotlin, если не нужен
+}
+
+android {
+    namespace 'com.example.eyegod'  // 🔴 Обязательно!
+    compileSdk 36  // Повысили до 36 (из-за ошибки в логе)
+
+    defaultConfig {
+        applicationId "com.example.eyegod"
+        minSdk 21
+        targetSdk 34
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    buildFeatures {
+        viewBinding true
+    }
+}
+
+dependencies {
+    // Только нужные библиотеки для Java + XML
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.core:core-ktx:1.12.0'
+}
