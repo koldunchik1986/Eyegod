@@ -265,7 +265,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startSearch() {
-        Log.d(TAG, "Поиск запущен");
+        Log.d("Eyegod", "startSearch: вызван");
         String query = editTextQuery.getText().toString().trim().toLowerCase();
         if (query.isEmpty()) {
             runOnUiThread(() -> textViewResults.setText("Введите запрос."));
@@ -278,13 +278,15 @@ public class MainActivity extends AppCompatActivity {
             List<String> results = new ArrayList<>();
             java.io.File[] files = csvDir.listFiles((dir, name) -> name.endsWith(".csv"));
 
-            Log.d(TAG, "Поиск по " + (files != null ? files.length : 0) + " файлам");
+            Log.d("Eyegod", "Файлов для поиска: " + (files != null ? files.length : 0));
 
             if (files != null) {
                 for (java.io.File file : files) {
+                    Log.d("Eyegod", "Поиск в файле: " + file.getName());
                     try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file)))) {
                         String line;
                         while ((line = reader.readLine()) != null) {
+                            Log.d("Eyegod", "Строка: " + line);
                             line = line.trim();
                             if (line.isEmpty()) continue;
 
@@ -298,7 +300,7 @@ public class MainActivity extends AppCompatActivity {
 
                             String searchable = (tel + name + tgId + email).toLowerCase();
                             if (searchable.contains(query)) {
-                                Log.d(TAG, "Найдено в файле: " + file.getName());
+                                Log.d("Eyegod", "Найдено: " + name);
                                 StringBuilder result = new StringBuilder();
                                 result.append("База: ").append(file.getName()).append("\n");
                                 result.append("ФИО: ").append(name.isEmpty() ? "отсутствует" : name).append("\n");
@@ -309,7 +311,7 @@ public class MainActivity extends AppCompatActivity {
                             }
                         }
                     } catch (IOException e) {
-                        Log.e(TAG, "Ошибка чтения файла: " + file.getName(), e);
+                        Log.e("Eyegod", "Ошибка чтения файла: " + file.getName(), e);
                         results.add("Ошибка: " + file.getName());
                     }
                 }
@@ -319,10 +321,9 @@ public class MainActivity extends AppCompatActivity {
                     ? "Ничего не найдено по запросу: " + query
                     : String.join("\n\n", results);
 
-            runOnUiThread(() -> {
-                textViewResults.setText(finalText);
-                Log.d(TAG, "Результаты выведены: " + results.size() + " совпадений");
-            });
+            Log.d("Eyegod", "Результат: " + finalText);
+
+            runOnUiThread(() -> textViewResults.setText(finalText));
         }).start();
     }
 }
