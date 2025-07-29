@@ -197,9 +197,9 @@ public class MainActivity extends AppCompatActivity {
                         }
 
                         // Опционально: можно проигнорировать ошибку удаления .idx или показать предупреждение
-                        if (!idxDeleted) {
-                            Log.w("MainActivity", "Не удалось удалить файл индекса: " + indexFile.getName());
-                        }
+                        // if (!idxDeleted) {
+                            // Log.w("MainActivity", "Не удалось удалить файл индекса: " + indexFile.getName());
+                        // }
                     })
                     .setNegativeButton("Нет", null)
                     .show();
@@ -223,12 +223,32 @@ public class MainActivity extends AppCompatActivity {
                     Toast.makeText(this, "Файл уже существует", Toast.LENGTH_SHORT).show();
                     return;
                 }
-                if (selectedFile.renameTo(newFile)) {
-                    Toast.makeText(this, "Переименован", Toast.LENGTH_SHORT).show();
+
+                // Переименовываем основной CSV-файл
+                boolean csvRenamed = selectedFile.renameTo(newFile);
+
+                // Если CSV успешно переименован, переименовываем и .idx файл
+                if (csvRenamed) {
+                    File oldIndexFile = new File(selectedFile.getParent(), selectedFile.getName() + ".idx");
+                    File newIndexFile = new File(csvDir, newName + ".idx");
+
+                    boolean idxRenamed = true;
+                    if (oldIndexFile.exists()) {
+                        idxRenamed = oldIndexFile.renameTo(newIndexFile);
+                    }
+
+                    // Сообщаем о результате
+                    if (idxRenamed) {
+                        Toast.makeText(this, "Переименован", Toast.LENGTH_SHORT).show();
+                    } else {
+                        Toast.makeText(this, "CSV переименован, но не удалось переименовать индекс", Toast.LENGTH_SHORT).show();
+                    }
+
+                    // Обновляем ссылку на выбранный файл
                     selectedFile = newFile;
                     showFilesList();
                 } else {
-                    Toast.makeText(this, "Ошибка", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Ошибка при переименовании", Toast.LENGTH_SHORT).show();
                 }
             });
             builder.setNegativeButton("Отмена", null);
@@ -422,6 +442,16 @@ public class MainActivity extends AppCompatActivity {
             String headerLine = reader.readLine(); // skip
             if (headerLine == null) return;
 
+            // Определяем индексы нужных полей
+            int telIndex = -1, nameIndex = -1, emailIndex = -1, tgIdIndex = -1;
+            for (int i = 0; i < headers.length; i++) {
+                String h = headers[i].toLowerCase();
+                if (h.contains("tel") || h.contains("phone")) telIndex = i;
+                else if (h.contains("name") || h.contains("фио")) nameIndex = i;
+                else if (h.contains("mail") || h.contains("email")) emailIndex = i;
+                else if (h.contains("tg") || h.contains("telegram")) tgIdIndex = i;
+            }
+
             String line;
             while ((line = reader.readLine()) != null) {
                 line = line.trim();
@@ -430,12 +460,26 @@ public class MainActivity extends AppCompatActivity {
                 if (parts.length < headers.length) continue;
 
                 StringBuilder searchableLine = new StringBuilder();
-                for (int i = 0; i < headers.length; i++) {
-                    String value = i < parts.length ? cleanField(parts[i]) : "";
-                    searchableLine.append(value.toLowerCase()).append(" ");
+
+                // Добавляем только нужные поля
+                if (telIndex != -1 && telIndex < parts.length) {
+                    searchableLine.append(cleanField(parts[telIndex]).toLowerCase()).append(" ");
                 }
-                writer.write(searchableLine.toString().trim());
-                writer.newLine();
+                if (nameIndex != -1 && nameIndex < parts.length) {
+                    searchableLine.append(cleanField(parts[nameIndex]).toLowerCase()).append(" ");
+                }
+                if (emailIndex != -1 && emailIndex < parts.length) {
+                    searchableLine.append(cleanField(parts[emailIndex]).toLowerCase()).append(" ");
+                }
+                if (tgIdIndex != -1 && tgIdIndex < parts.length) {
+                    searchableLine.append(cleanField(parts[tgIdIndex]).toLowerCase()).append(" ");
+                }
+
+                String indexLine = searchableLine.toString().trim();
+                if (!indexLine.isEmpty()) {
+                    writer.write(indexLine);
+                    writer.newLine();
+                }
             }
 
         } catch (IOException e) {
