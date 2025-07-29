@@ -176,13 +176,29 @@ public class MainActivity extends AppCompatActivity {
                     .setTitle("Удалить файл")
                     .setMessage("Удалить файл:\n" + selectedFile.getName() + "?")
                     .setPositiveButton("Да", (d, w) -> {
-                        if (selectedFile.delete()) {
+                        // Удаляем основной CSV-файл
+                        boolean csvDeleted = selectedFile.delete();
+
+                        // Формируем путь к файлу индекса и удаляем его
+                        File indexFile = new File(selectedFile.getParent(), selectedFile.getName() + ".idx");
+                        boolean idxDeleted = true;
+                        if (indexFile.exists()) {
+                            idxDeleted = indexFile.delete();
+                        }
+
+                        // Проверяем, успешно ли удалён основной файл
+                        if (csvDeleted) {
                             Toast.makeText(this, "Файл удалён", Toast.LENGTH_SHORT).show();
                             selectedFile = null;
                             layoutFileActions.setVisibility(View.GONE);
                             showFilesList();
                         } else {
                             Toast.makeText(this, "Ошибка при удалении", Toast.LENGTH_SHORT).show();
+                        }
+
+                        // Опционально: можно проигнорировать ошибку удаления .idx или показать предупреждение
+                        if (!idxDeleted) {
+                            Log.w("MainActivity", "Не удалось удалить файл индекса: " + indexFile.getName());
                         }
                     })
                     .setNegativeButton("Нет", null)
@@ -398,7 +414,34 @@ public class MainActivity extends AppCompatActivity {
         intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
         filePickerLauncher.launch(intent);
     }
+    private void createSearchIndex(File csvFile, String[] headers) {
+        File indexFile = new File(csvFile.getParent(), csvFile.getName() + ".idx");
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(csvFile)));
+             BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(indexFile)))) {
 
+            String headerLine = reader.readLine(); // skip
+            if (headerLine == null) return;
+
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
+                String[] parts = line.split("[;|]", -1);
+                if (parts.length < headers.length) continue;
+
+                StringBuilder searchableLine = new StringBuilder();
+                for (int i = 0; i < headers.length; i++) {
+                    String value = i < parts.length ? cleanField(parts[i]) : "";
+                    searchableLine.append(value.toLowerCase()).append(" ");
+                }
+                writer.write(searchableLine.toString().trim());
+                writer.newLine();
+            }
+
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
     private void importAndNormalizeCSV(Uri uri) {
         new Thread(() -> {
             try {
@@ -425,7 +468,7 @@ public class MainActivity extends AppCompatActivity {
                 inputStream.close();
                 inputStream = getContentResolver().openInputStream(uri);
                 reader = new BufferedReader(new InputStreamReader(inputStream));
-                reader.readLine();
+                reader.readLine(); // skip header
 
                 Map<String, Integer> fieldMapping = showMappingDialog(headers);
                 if (fieldMapping == null) return;
@@ -446,7 +489,10 @@ public class MainActivity extends AppCompatActivity {
 
                 boolean success = saveFileFromUri(uri, outputFile);
                 if (success) {
+                    // ✅ Ключевая строка: создаём индекс
+                    createSearchIndex(outputFile, headers);
                     saveSearchTemplate(outputFile.getName(), headers);
+
                     mainHandler.post(() -> {
                         Toast.makeText(this, "Файл добавлен: " + outputFile.getName(), Toast.LENGTH_LONG).show();
                         showFilesList();
