@@ -159,7 +159,24 @@ public class MainActivity extends AppCompatActivity {
             }
         });
     }
+    private void showCurrentPage() {
+        int fromIndex = currentPage * RESULTS_PER_PAGE;
+        int toIndex = Math.min(fromIndex + RESULTS_PER_PAGE, allResults.size());
 
+        List<String> pageResults = allResults.subList(fromIndex, toIndex);
+        String text = String.join("", pageResults);
+
+        runOnUiThread(() -> {
+            textViewResults.setText(text);
+            if (toIndex >= allResults.size()) {
+                buttonNextPage.setText("Больше нет результатов");
+                buttonNextPage.setEnabled(false);
+            } else {
+                buttonNextPage.setText("Следующие 20 результатов");
+                buttonNextPage.setEnabled(true);
+            }
+        });
+    }
     private void setupNextPageButton() {
         buttonNextPage.setOnClickListener(v -> {
             currentPage++;
@@ -306,6 +323,10 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
+        // Сохраняем копию запроса
+        String queryCopy = query;
+        String queryLower = queryCopy.toLowerCase();
+
         if (searchThread != null && searchThread.isAlive()) {
             shouldStopSearch = true;
             try {
@@ -319,112 +340,141 @@ public class MainActivity extends AppCompatActivity {
         allResults = new ArrayList<>();
 
         searchThread = new Thread(() -> {
+            String finalQueryType = detectQueryType(queryCopy); // Определяем тип один раз
+
             File[] files = csvDir.listFiles((dir, name) -> name.endsWith(".csv"));
             if (files == null) return;
-
-            SharedPreferences prefs = getSharedPreferences("templates", MODE_PRIVATE);
 
             for (File file : files) {
                 if (shouldStopSearch) break;
 
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file)))) {
-                    String headerLine = reader.readLine();
-                    if (headerLine == null || shouldStopSearch) continue;
+                File indexFile = new File(file.getParent(), file.getName() + ".idx");
+                if (!indexFile.exists()) {
+                    // Если индекса нет, пропускаем (или можно создать на лету)
+                    continue;
+                }
 
-                    String delimiter = headerLine.contains(";") ? ";" : "\\|";
-                    String[] headers = headerLine.trim().split(delimiter, -1);
-
-                    int telIndex = -1, nameIndex = -1, emailIndex = -1, tgIdIndex = -1;
-                    for (int i = 0; i < headers.length; i++) {
-                        String h = headers[i].toLowerCase();
-                        if (h.contains("tel") || h.contains("phone")) telIndex = i;
-                        else if (h.contains("name") || h.contains("фио")) nameIndex = i;
-                        else if (h.contains("mail") || h.contains("email")) emailIndex = i;
-                        else if (h.contains("tg") || h.contains("telegram")) tgIdIndex = i;
-                    }
-
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(indexFile)))) {
                     String line;
+                    int lineNumber = 0;
+
                     while (!shouldStopSearch && (line = reader.readLine()) != null) {
-                        line = line.trim();
-                        if (line.isEmpty()) continue;
-                        String[] parts = line.split(delimiter, -1);
-                        if (parts.length < headers.length) continue;
+                        lineNumber++;
 
                         boolean found = false;
-                        String queryLower = query.toLowerCase();
-
-                        if (query.matches("\\d+") && telIndex != -1) {
-                            found = cleanField(parts[telIndex]).contains(query);
-                        } else if (query.contains("@") && emailIndex != -1) {
-                            found = cleanField(parts[emailIndex]).toLowerCase().contains(queryLower);
-                        } else if ((query.startsWith("@") || (query.toLowerCase().startsWith("id") && query.substring(2).matches("\\d+"))) && tgIdIndex != -1) {
-                            found = cleanField(parts[tgIdIndex]).toLowerCase().contains(queryLower);
-                        } else if (query.matches("[a-zA-Zа-яА-ЯёЁ]+") && nameIndex != -1) {
-                            found = cleanField(parts[nameIndex]).toLowerCase().contains(queryLower);
-                        } else {
-                            for (String part : parts) {
-                                if (cleanField(part).toLowerCase().contains(queryLower)) {
+                        switch (finalQueryType) {
+                            case "tel":
+                                // Поиск по телефону
+                                if (line.startsWith(queryCopy)) {
                                     found = true;
-                                    break;
                                 }
-                            }
+                                break;
+                            case "email":
+                            case "tg_id":
+                            case "name":
+                            default:
+                                // Поиск по email, tg_id, name или всем полям
+                                if (line.contains(queryLower)) {
+                                    found = true;
+                                }
+                                break;
                         }
 
                         if (found) {
-                            StringBuilder result = new StringBuilder();
-                            result.append("База: ").append(file.getName()).append("\n");
-                            for (int i = 0; i < headers.length; i++) {
-                                String value = i < parts.length ? cleanField(parts[i]) : "";
-                                result.append(headers[i]).append(": ").append(value.isEmpty() ? "отсутствует" : value).append("\n");
+                            // Читаем оригинальную строку из CSV
+                            String originalLine = readLineFromCsv(file, lineNumber);
+                            if (originalLine != null) {
+                                allResults.add(originalLine);
                             }
-                            result.append("\n");
-                            allResults.add(result.toString());
                         }
                     }
                 } catch (IOException e) {
+                    e.printStackTrace();
                     if (!shouldStopSearch) {
                         allResults.add("Ошибка чтения: " + file.getName());
                     }
                 }
             }
 
+            // Показываем результаты
             runOnUiThread(() -> {
                 if (shouldStopSearch) {
                     Toast.makeText(this, "Поиск остановлен", Toast.LENGTH_SHORT).show();
                 } else {
                     currentPage = 0;
                     showCurrentPage();
-                    if (allResults.size() > RESULTS_PER_PAGE) {
-                        buttonNextPage.setVisibility(View.VISIBLE);
-                    } else {
-                        buttonNextPage.setVisibility(View.GONE);
-                    }
+                    buttonNextPage.setVisibility(allResults.size() > RESULTS_PER_PAGE ? View.VISIBLE : View.GONE);
                 }
                 buttonSearch.setText("Поиск");
             });
         });
 
         searchThread.start();
-    }
+    }private String readLineFromCsv(File csvFile, int targetLine) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(csvFile)))) {
+            String line;
+            int currentLine = 0;
+            while ((line = reader.readLine()) != null) {
+                if (currentLine == targetLine) {
+                    // Парсим строку и форматируем для вывода
+                    String[] parts = line.split("[;|]", -1);
+                    String headerLine = getHeaderLine(csvFile);
+                    if (headerLine == null) return null;
 
-    private void showCurrentPage() {
-        int fromIndex = currentPage * RESULTS_PER_PAGE;
-        int toIndex = Math.min(fromIndex + RESULTS_PER_PAGE, allResults.size());
-
-        List<String> pageResults = allResults.subList(fromIndex, toIndex);
-        String text = String.join("", pageResults);
-
-        runOnUiThread(() -> {
-            textViewResults.setText(text);
-            if (toIndex >= allResults.size()) {
-                buttonNextPage.setText("Больше нет результатов");
-                buttonNextPage.setEnabled(false);
-            } else {
-                buttonNextPage.setText("Следующие 20 результатов");
-                buttonNextPage.setEnabled(true);
+                    String[] headers = headerLine.trim().split("[;|]", -1);
+                    StringBuilder result = new StringBuilder();
+                    result.append("База: ").append(csvFile.getName()).append("\n");
+                    for (int i = 0; i < headers.length; i++) {
+                        String value = i < parts.length ? cleanField(parts[i]) : "";
+                        result.append(headers[i]).append(": ").append(value.isEmpty() ? "отсутствует" : value).append("\n");
+                    }
+                    result.append("\n");
+                    return result.toString();
+                }
+                currentLine++;
             }
-        });
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return null;
     }
+    private String getOriginalLineFromFile(File csvFile, int lineNumber) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(csvFile)))) {
+            String line;
+            int currentLine = 0;
+            while ((line = reader.readLine()) != null) {
+                if (currentLine == lineNumber) {
+                    String[] parts = line.split("[;|]", -1);
+                    String headerLine = getHeaderLine(csvFile);
+                    if (headerLine == null) return null;
+
+                    String[] headers = headerLine.trim().split("[;|]", -1);
+                    StringBuilder result = new StringBuilder();
+                    result.append("База: ").append(csvFile.getName()).append("\n");
+                    for (int i = 0; i < headers.length; i++) {
+                        String value = i < parts.length ? cleanField(parts[i]) : "";
+                        result.append(headers[i]).append(": ").append(value.isEmpty() ? "отсутствует" : value).append("\n");
+                    }
+                    result.append("\n");
+                    return result.toString();
+                }
+                currentLine++;
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    private String getHeaderLine(File csvFile) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(csvFile)))) {
+            return reader.readLine();
+        } catch (IOException e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
 
     private void pickFile() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
