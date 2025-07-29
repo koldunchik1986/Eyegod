@@ -26,6 +26,18 @@
         android:layout_height="wrap_content"
         android:text="Поиск" />
 
+    <TextView
+        android:id="@+id/textViewSearchType"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="Тип запроса не определён"
+        android:textSize="12sp"
+        android:textColor="#666"
+        android:gravity="center"
+        android:layout_gravity="center_horizontal"
+        android:visibility="gone" />
+
     <!-- Кнопка Управление файлами -->
     <Button
         android:id="@+id/buttonShowFiles"

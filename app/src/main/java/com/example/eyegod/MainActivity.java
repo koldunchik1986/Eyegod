@@ -4,29 +4,27 @@ import android.Manifest;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.OpenableColumns;
+import android.text.Editable;
+import android.text.TextWatcher;
+import androidx.core.content.FileProvider;
 import android.view.View;
 import android.widget.*;
-
-
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-import androidx.core.content.FileProvider;
-
 import java.io.*;
+import java.security.MessageDigest;
 import java.util.*;
-import java.util.ArrayList;
-import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
     private EditText editTextQuery;
@@ -37,6 +35,7 @@ public class MainActivity extends AppCompatActivity {
     private Button buttonDeleteFile, buttonRenameFile, buttonShareFile;
     private static final int REQUEST_CODE_PERMISSION = 100;
     private File csvDir;
+    private TextView textViewSearchType;
     private Handler mainHandler = new Handler(Looper.getMainLooper());
     private Uri lastPickedUri;
     private File selectedFile = null;
@@ -54,14 +53,52 @@ public class MainActivity extends AppCompatActivity {
             }
     );
 
-    @Override
+    private void setupSearchTypeDetector() {
+        final Handler handler = new Handler(Looper.getMainLooper());
+        final Runnable[] searchRunnable = new Runnable[1]; // Используем массив для "изменяемой" ссылки
+
+        editTextQuery.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {}
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                String query = s.toString().trim();
+
+                // Отменяем предыдущий запланированный запуск
+                if (searchRunnable[0] != null) {
+                    handler.removeCallbacks(searchRunnable[0]);
+                }
+
+                if (query.isEmpty()) {
+                    textViewSearchType.setText("Тип запроса не определён");
+                    textViewSearchType.setVisibility(View.GONE);
+                    return;
+                }
+
+                // Создаём новый Runnable
+                searchRunnable[0] = () -> {
+                    String queryType = detectQueryType(query);
+                    String displayText = getDisplayTextForType(queryType);
+                    textViewSearchType.setText(displayText);
+                    textViewSearchType.setVisibility(View.VISIBLE);
+                };
+
+                handler.postDelayed(searchRunnable[0], 3000); // 3 секунды
+            }
+        });
+    }
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-
+        
         editTextQuery = findViewById(R.id.editTextQuery);
         buttonSearch = findViewById(R.id.buttonSearch);
         buttonAddFile = findViewById(R.id.buttonAddFile);
+        textViewSearchType = findViewById(R.id.textViewSearchType);
         textViewResults = findViewById(R.id.textViewResults);
         textViewVersion = findViewById(R.id.textViewVersion);
         buttonShowFiles = findViewById(R.id.buttonShowFiles);
@@ -71,6 +108,7 @@ public class MainActivity extends AppCompatActivity {
         buttonRenameFile = findViewById(R.id.buttonRenameFile);
         buttonShareFile = findViewById(R.id.buttonShareFile);
 
+        setupSearchTypeDetector();
         csvDir = new File(getExternalFilesDir(null), "csv");
         if (!csvDir.exists()) csvDir.mkdirs();
 
@@ -79,7 +117,7 @@ public class MainActivity extends AppCompatActivity {
             ActivityCompat.requestPermissions(this,
                     new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, REQUEST_CODE_PERMISSION);
         }
-
+        setupSearchTypeDetector();
         buttonSearch.setOnClickListener(v -> startSearch());
         buttonAddFile.setOnClickListener(v -> pickFile());
         buttonShowFiles.setOnClickListener(v -> showFilesList());
@@ -95,10 +133,6 @@ public class MainActivity extends AppCompatActivity {
                             selectedFile = null;
                             layoutFileActions.setVisibility(View.GONE);
                             showFilesList();
-                            if (listViewFiles.getAdapter() == null || listViewFiles.getAdapter().getCount() == 0) {
-                                layoutFileActions.setVisibility(View.GONE);
-                                listViewFiles.setVisibility(View.GONE);
-                            }
                         } else {
                             Toast.makeText(this, "Ошибка при удалении", Toast.LENGTH_SHORT).show();
                         }
@@ -198,33 +232,15 @@ public class MainActivity extends AppCompatActivity {
                 reader = new BufferedReader(new InputStreamReader(inputStream));
                 reader.readLine(); // skip header
 
-                // Вызываем диалог сопоставления (в UI потоке)
                 Map<String, Integer> fieldMapping = showMappingDialog(headers);
                 if (fieldMapping == null) return;
-
-                List<Map<String, String>> records = new ArrayList<>();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    line = line.trim();
-                    if (line.isEmpty()) continue;
-                    String[] parts = line.split(delimiter, -1);
-                    Map<String, String> record = new HashMap<>();
-                    for (int i = 0; i < headers.length; i++) {
-                        String key = headers[i].trim().toLowerCase();
-                        String value = i < parts.length ? cleanField(parts[i]) : "";
-                        record.put(key, value);
-                    }
-                    records.add(record);
-                }
-
-                inputStream.close();
 
                 String fileName = getFileName(uri);
                 if (fileName == null || fileName.isEmpty()) {
                     fileName = "imported_" + System.currentTimeMillis() + ".csv";
                 }
 
-                File outputFile = getUniqueFileForSave(fileName);
+                File outputFile = getUniqueFileForSaveByHash(uri, fileName);
                 if (outputFile == null) {
                     final String finalFileName = fileName;
                     mainHandler.post(() ->
@@ -233,16 +249,17 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
 
-                try (OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(outputFile))) {
-                    writer.write(headerLine + "\n");
-                    for (Map<String, String> record : records) {
-                        List<String> values = new ArrayList<>();
-                        for (String header : headers) {
-                            values.add(record.getOrDefault(header.trim().toLowerCase(), ""));
-                        }
-                        writer.write(String.join(";", values) + "\n");
-                    }
+                // Сохраняем CSV
+                boolean success = saveFileFromUri(uri, outputFile);
+                if (!success) {
+                    mainHandler.post(() ->
+                            Toast.makeText(this, "Ошибка при сохранении", Toast.LENGTH_SHORT).show()
+                    );
+                    return;
                 }
+
+                // ✅ Создаём индекс для быстрого поиска
+                createSearchIndex(outputFile, headers);
 
                 saveSearchTemplate(outputFile.getName(), headers);
 
@@ -257,8 +274,36 @@ public class MainActivity extends AppCompatActivity {
                         Toast.makeText(this, "Ошибка: " + e.getMessage(), Toast.LENGTH_LONG).show()
                 );
             }
-        }).start(); // ✅ Это закрытие new Thread().start()
-    } // ✅ Это закрытие метода importAndNormalizeCSV
+        }).start();
+    }
+    private void createSearchIndex(File csvFile, String[] headers) {
+        File indexFile = new File(csvFile.getParent(), csvFile.getName() + ".idx");
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(csvFile)));
+             BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(indexFile)))) {
+
+            String headerLine = reader.readLine(); // skip
+            if (headerLine == null) return;
+
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
+                String[] parts = line.split("[;|]", -1);
+                if (parts.length < headers.length) continue;
+
+                StringBuilder searchableLine = new StringBuilder();
+                for (int i = 0; i < headers.length; i++) {
+                    String value = i < parts.length ? cleanField(parts[i]) : "";
+                    searchableLine.append(value.toLowerCase()).append(" ");
+                }
+                writer.write(searchableLine.toString().trim());
+                writer.newLine();
+            }
+
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
     private Map<String, Integer> showMappingDialog(String[] headers) {
         Map<String, Integer> mapping = new HashMap<>();
         boolean[] finished = {false};
@@ -317,7 +362,15 @@ public class MainActivity extends AppCompatActivity {
 
         return mapping.isEmpty() ? null : mapping;
     }
-
+    private String getDisplayTextForType(String type) {
+        switch (type) {
+            case "tel": return "🔍 Поиск по: Телефон";
+            case "email": return "📧 Поиск по: Email";
+            case "tg_id": return "💬 Поиск по: Telegram ID";
+            case "name": return "👤 Поиск по: Имя";
+            case "all": default: return "🔎 Поиск по: всем полям";
+        }
+    }
     private String inferKey(String header) {
         header = header.toLowerCase();
         if (header.contains("tel") || header.contains("phone")) return "tel";
@@ -354,7 +407,7 @@ public class MainActivity extends AppCompatActivity {
         return result;
     }
 
-    private File getUniqueFileForSave(String originalFileName) {
+    private File getUniqueFileForSaveByHash(Uri uri, String originalFileName) throws IOException {
         if (!originalFileName.toLowerCase().endsWith(".csv")) {
             originalFileName += ".csv";
         }
@@ -363,12 +416,12 @@ public class MainActivity extends AppCompatActivity {
         String baseName = originalFileName.substring(0, originalFileName.length() - 4);
         int counter = 1;
 
-        List<String> newContent = getNormalizedContent(lastPickedUri);
-        if (newContent == null) return targetFile;
+        String newFileHash = calculateFileHash(uri);
+        if (newFileHash == null) return targetFile;
 
         while (targetFile.exists()) {
-            List<String> existingContent = getFileContent(targetFile);
-            if (existingContent != null && isContentEqual(existingContent, newContent)) {
+            String existingHash = calculateFileHashForFile(targetFile);
+            if (newFileHash.equals(existingHash)) {
                 return null;
             }
             targetFile = new File(csvDir, baseName + "_" + counter + ".csv");
@@ -378,100 +431,96 @@ public class MainActivity extends AppCompatActivity {
         return targetFile;
     }
 
-    private List<String> getNormalizedContent(Uri uri) {
+    private String calculateFileHash(Uri uri) {
         try (InputStream is = getContentResolver().openInputStream(uri)) {
             if (is == null) return null;
-            List<String[]> records = parseInputCSV(is);
-            List<String> content = new ArrayList<>();
-            for (String[] row : records) {
-                content.add(String.join(";", row));
+            return calculateMD5(is);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    private String calculateFileHashForFile(File file) {
+        try (FileInputStream fis = new FileInputStream(file)) {
+            return calculateMD5(fis);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    private String calculateMD5(InputStream is) throws IOException {
+        try {
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = is.read(buffer)) != -1) {
+                md.update(buffer, 0, read);
             }
-            return content;
+            byte[] digest = md.digest();
+            StringBuilder sb = new StringBuilder();
+            for (byte b : digest) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
         } catch (Exception e) {
             e.printStackTrace();
             return null;
         }
     }
 
-    private List<String> getFileContent(File file) {
-        List<String> content = new ArrayList<>();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file)))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                content.add(line.trim());
+    private boolean saveFileFromUri(Uri uri, File outputFile) {
+        try (InputStream is = getContentResolver().openInputStream(uri);
+             OutputStream os = new FileOutputStream(outputFile)) {
+            if (is == null) return false;
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = is.read(buffer)) != -1) {
+                os.write(buffer, 0, read);
             }
+            return true;
         } catch (IOException e) {
-            return null;
+            e.printStackTrace();
+            return false;
         }
-        return content;
     }
+    private String detectQueryType(String query) {
+        query = query.trim();
+        if (query.isEmpty()) return "all";
 
-    private boolean isContentEqual(List<String> list1, List<String> list2) {
-        if (list1.size() != list2.size()) return false;
-        for (int i = 0; i < list1.size(); i++) {
-            if (!list1.get(i).equals(list2.get(i))) {
-                return false;
-            }
+        // 1. Только цифры — это телефон
+        if (query.matches("\\d+")) {
+            return "tel";
         }
-        return true;
-    }
 
-    private List<String[]> parseInputCSV(InputStream inputStream) throws IOException {
-        BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
-        List<String[]> normalizedData = new ArrayList<>();
-        String line;
-        while ((line = reader.readLine()) != null) {
-            line = line.trim();
-            if (line.isEmpty()) continue;
-            String delimiter = line.contains(";") ? ";" : "\\|";
-            String[] parts = line.split(delimiter, -1);
-            if (parts.length != 4) continue;
-
-            String tel = "", name = "", tgId = "", email = "";
-            for (String field : parts) {
-                field = field.trim();
-                if (field.matches(".*[а-яА-Яa-zA-Z]{2,}.*") && !field.contains("@") && !field.contains("+") && !field.matches(".*\\d.*")) {
-                    name = field;
-                } else if (field.contains("@")) {
-                    email = field;
-                } else if (field.contains("t.me/") || field.startsWith("@") || field.matches("^[a-zA-Z][a-zA-Z0-9._]{4,32}$")) {
-                    tgId = field;
-                } else if (field.matches(".*\\d.*")) {
-                    tel = field;
-                }
-            }
-
-            if (name.isEmpty() || tel.isEmpty() || email.isEmpty() || tgId.isEmpty()) {
-                if (line.contains("tel") || line.contains("phone") || parts[0].matches(".*\\d.*")) {
-                    tel = parts[0].trim(); email = parts[1].trim(); tgId = parts[2].trim(); name = parts[3].trim();
-                } else if (line.contains("tg") || parts[0].startsWith("@")) {
-                    tgId = parts[0].trim(); email = parts[1].trim(); name = parts[2].trim(); tel = parts[3].trim();
-                } else {
-                    tel = parts[0]; name = parts[1]; tgId = parts[2]; email = parts[3];
-                }
-            }
-
-            normalizedData.add(new String[]{
-                    cleanField(tel),
-                    cleanField(name),
-                    cleanField(tgId),
-                    cleanField(email)
-            });
+        // 2. Есть @ — это email
+        if (query.contains("@")) {
+            return "email";
         }
-        reader.close();
-        return normalizedData;
-    }
 
-    private String cleanField(String s) {
-        return s == null ? "" : s.trim().replaceAll("^\"|\"$", "");
-    }
+        // 3. tg_id: начинается с @ или id + цифры
+        if (query.startsWith("@") || (query.toLowerCase().startsWith("id") && query.substring(2).matches("\\d+"))) {
+            return "tg_id";
+        }
 
+        // 4. Только буквы — это имя
+        if (query.matches("[a-zA-Zа-яА-ЯёЁ]+")) {
+            return "name";
+        }
+
+        // Если не поняли — ищем по всем полям
+        return "all";
+    }
     private void startSearch() {
-        String query = editTextQuery.getText().toString().trim().toLowerCase();
+        String query = editTextQuery.getText().toString().trim();
         if (query.isEmpty()) {
             runOnUiThread(() -> textViewResults.setText("Введите запрос."));
             return;
         }
+
+        String queryLower = query.toLowerCase();
+        String queryType = detectQueryType(query);
 
         textViewResults.setText("Поиск...");
         new Thread(() -> {
@@ -486,37 +535,55 @@ public class MainActivity extends AppCompatActivity {
                     String headerLine = reader.readLine();
                     if (headerLine == null) continue;
 
-                    String[] headers = headerLine.trim().split("[;|]", -1);
-                    String template = prefs.getString(file.getName(), "$tel $name $email $tg_id");
+                    String delimiter = headerLine.contains(";") ? ";" : "\\|";
+                    String[] headers = headerLine.trim().split(delimiter, -1);
+
+                    // Определяем индексы нужных полей
+                    int telIndex = -1, nameIndex = -1, emailIndex = -1, tgIdIndex = -1;
+                    for (int i = 0; i < headers.length; i++) {
+                        String h = headers[i].toLowerCase();
+                        if (h.contains("tel") || h.contains("phone")) telIndex = i;
+                        else if (h.contains("name") || h.contains("фио")) nameIndex = i;
+                        else if (h.contains("mail") || h.contains("email")) emailIndex = i;
+                        else if (h.contains("tg") || h.contains("telegram")) tgIdIndex = i;
+                    }
 
                     String line;
                     while ((line = reader.readLine()) != null) {
                         line = line.trim();
                         if (line.isEmpty()) continue;
-                        String[] parts = line.split("[;|]", -1);
+                        String[] parts = line.split(delimiter, -1);
                         if (parts.length < headers.length) continue;
 
-                        Map<String, String> record = new HashMap<>();
-                        for (int i = 0; i < headers.length; i++) {
-                            String key = "$" + headers[i].trim().toLowerCase();
-                            String value = i < parts.length ? cleanField(parts[i]) : "";
-                            record.put(key, value);
-                        }
-
                         boolean found = false;
-                        StringBuilder result = new StringBuilder();
-                        result.append("База: ").append(file.getName()).append("\n");
-                        for (String header : headers) {
-                            String key = "$" + header.trim().toLowerCase();
-                            String value = record.get(key);
-                            if (value != null && value.toLowerCase().contains(query)) {
-                                found = true;
+
+                        // Ищем только в нужном поле
+                        if (queryType.equals("tel") && telIndex != -1) {
+                            found = cleanField(parts[telIndex]).contains(query);
+                        } else if (queryType.equals("email") && emailIndex != -1) {
+                            found = cleanField(parts[emailIndex]).toLowerCase().contains(queryLower);
+                        } else if (queryType.equals("tg_id") && tgIdIndex != -1) {
+                            found = cleanField(parts[tgIdIndex]).toLowerCase().contains(queryLower);
+                        } else if (queryType.equals("name") && nameIndex != -1) {
+                            found = cleanField(parts[nameIndex]).toLowerCase().contains(queryLower);
+                        } else {
+                            // Если тип не определён — ищем по всем полям
+                            for (String part : parts) {
+                                if (cleanField(part).toLowerCase().contains(queryLower)) {
+                                    found = true;
+                                    break;
+                                }
                             }
-                            result.append(header).append(": ").append(value.isEmpty() ? "отсутствует" : value).append("\n");
                         }
-                        result.append("\n");
 
                         if (found) {
+                            StringBuilder result = new StringBuilder();
+                            result.append("База: ").append(file.getName()).append("\n");
+                            for (int i = 0; i < headers.length; i++) {
+                                String value = i < parts.length ? cleanField(parts[i]) : "";
+                                result.append(headers[i]).append(": ").append(value.isEmpty() ? "отсутствует" : value).append("\n");
+                            }
+                            result.append("\n");
                             results.add(result.toString());
                         }
                     }
@@ -551,11 +618,15 @@ public class MainActivity extends AppCompatActivity {
         listViewFiles.setAdapter(adapter);
         listViewFiles.setVisibility(View.VISIBLE);
         layoutFileActions.setVisibility(View.GONE);
-            listViewFiles.setOnItemClickListener((p, v, pos, id) -> {
-                selectedFile = files[pos];
-                layoutFileActions.setVisibility(View.VISIBLE);
-            });
+        listViewFiles.setOnItemClickListener((p, v, pos, id) -> {
+            selectedFile = files[pos];
+            layoutFileActions.setVisibility(View.VISIBLE);
+        });
         selectedFile = null;
+    }
+
+    private String cleanField(String s) {
+        return s == null ? "" : s.trim().replaceAll("^\"|\"$", "");
     }
 
     private void copySamplesFromAssets() {
