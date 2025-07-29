@@ -96,9 +96,9 @@ public class MainActivity extends AppCompatActivity {
         // Настройка всех компонентов
         setVersionName();
         setupSearchTypeDetector();
-        setupSearchButton();           // ✅ Вызов
-        setupNextPageButton();         // ✅ Вызов
-        setupFileManagementButtons();  // ✅ Вызов
+        setupSearchButton();
+        setupNextPageButton();
+        setupFileManagementButtons();
         buttonAddFile.setOnClickListener(v -> pickFile());
         copySamplesFromAssets();
     }
@@ -661,8 +661,14 @@ public class MainActivity extends AppCompatActivity {
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, fileNames);
         listViewFiles.setAdapter(adapter);
         listViewFiles.setVisibility(View.VISIBLE);
-        layoutFileActions.setVisibility(View.GONE);
+        layoutFileActions.setVisibility(View.GONE); // Скрываем панель при открытии
         selectedFile = null;
+
+        // ✅ Ключевая строка: при клике на файл - показываем кнопки
+        listViewFiles.setOnItemClickListener((parent, view, position, id) -> {
+            selectedFile = files[position];
+            layoutFileActions.setVisibility(View.VISIBLE);
+        });
     }
 
     private void copySamplesFromAssets() {
