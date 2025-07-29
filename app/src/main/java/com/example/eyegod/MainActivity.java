@@ -47,7 +47,7 @@ public class MainActivity extends AppCompatActivity {
     private volatile boolean shouldStopSearch = false;
     private List<String> allResults = new ArrayList<>();
     private int currentPage = 0;
-    private static final int RESULTS_PER_PAGE = 20;
+    private static final int RESULTS_PER_PAGE = 50;
 
     private final ActivityResultLauncher<Intent> filePickerLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
@@ -168,12 +168,18 @@ public class MainActivity extends AppCompatActivity {
 
         runOnUiThread(() -> {
             textViewResults.setText(text);
-            if (toIndex >= allResults.size()) {
+
+            // ✅ Проверяем, есть ли следующая страница
+            if (toIndex < allResults.size()) {
+                // Есть ещё результаты — показываем кнопку
+                buttonNextPage.setText("Следующие 50 результатов");
+                buttonNextPage.setEnabled(true);
+                buttonNextPage.setVisibility(View.VISIBLE);
+            } else {
+                // Больше нет результатов
                 buttonNextPage.setText("Больше нет результатов");
                 buttonNextPage.setEnabled(false);
-            } else {
-                buttonNextPage.setText("Следующие 20 результатов");
-                buttonNextPage.setEnabled(true);
+                buttonNextPage.setVisibility(View.VISIBLE);
             }
         });
     }
@@ -323,9 +329,9 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        // Сохраняем копию запроса
-        String queryCopy = query;
-        String queryLower = queryCopy.toLowerCase();
+        // ✅ Создаём копии ДО запуска потока
+        String queryLower = query.toLowerCase(); // Для contains
+        String queryForStartsWith = query; // Для startsWith
 
         if (searchThread != null && searchThread.isAlive()) {
             shouldStopSearch = true;
@@ -340,7 +346,7 @@ public class MainActivity extends AppCompatActivity {
         allResults = new ArrayList<>();
 
         searchThread = new Thread(() -> {
-            String finalQueryType = detectQueryType(queryCopy); // Определяем тип один раз
+            String finalQueryType = detectQueryType(query); // ✅ Используем оригинальный query
 
             File[] files = csvDir.listFiles((dir, name) -> name.endsWith(".csv"));
             if (files == null) return;
@@ -349,10 +355,7 @@ public class MainActivity extends AppCompatActivity {
                 if (shouldStopSearch) break;
 
                 File indexFile = new File(file.getParent(), file.getName() + ".idx");
-                if (!indexFile.exists()) {
-                    // Если индекса нет, пропускаем (или можно создать на лету)
-                    continue;
-                }
+                if (!indexFile.exists()) continue;
 
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(indexFile)))) {
                     String line;
@@ -364,8 +367,10 @@ public class MainActivity extends AppCompatActivity {
                         boolean found = false;
                         switch (finalQueryType) {
                             case "tel":
-                                // Поиск по телефону
-                                if (line.startsWith(queryCopy)) {
+                                // ✅ ВАЖНО: Используем contains, а не startsWith, потому что:
+                                // 1. Поиск по телефону не обязательно в начале строки индекса
+                                // 2. Гарантируем совпадение регистра
+                                if (line.contains(queryLower)) {
                                     found = true;
                                 }
                                 break;
@@ -373,7 +378,6 @@ public class MainActivity extends AppCompatActivity {
                             case "tg_id":
                             case "name":
                             default:
-                                // Поиск по email, tg_id, name или всем полям
                                 if (line.contains(queryLower)) {
                                     found = true;
                                 }
@@ -381,7 +385,6 @@ public class MainActivity extends AppCompatActivity {
                         }
 
                         if (found) {
-                            // Читаем оригинальную строку из CSV
                             String originalLine = readLineFromCsv(file, lineNumber);
                             if (originalLine != null) {
                                 allResults.add(originalLine);
@@ -403,13 +406,18 @@ public class MainActivity extends AppCompatActivity {
                 } else {
                     currentPage = 0;
                     showCurrentPage();
-                    buttonNextPage.setVisibility(allResults.size() > RESULTS_PER_PAGE ? View.VISIBLE : View.GONE);
+                    if (allResults.size() > RESULTS_PER_PAGE) {
+                        buttonNextPage.setVisibility(View.VISIBLE);
+                    } else {
+                        buttonNextPage.setVisibility(View.GONE);
+                    }
                 }
                 buttonSearch.setText("Поиск");
             });
         });
 
         searchThread.start();
+
     }private String readLineFromCsv(File csvFile, int targetLine) {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(csvFile)))) {
             String line;
