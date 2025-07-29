@@ -22,6 +22,8 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
+
 import java.io.*;
 import java.security.MessageDigest;
 import java.util.*;
@@ -29,16 +31,23 @@ import java.util.*;
 public class MainActivity extends AppCompatActivity {
     private EditText editTextQuery;
     private Button buttonSearch, buttonAddFile, buttonShowFiles;
-    private TextView textViewResults, textViewVersion;
+    private Button buttonNextPage;
+    private TextView textViewResults, textViewVersion, textViewSearchType;
     private ListView listViewFiles;
     private LinearLayout layoutFileActions;
     private Button buttonDeleteFile, buttonRenameFile, buttonShareFile;
     private static final int REQUEST_CODE_PERMISSION = 100;
     private File csvDir;
-    private TextView textViewSearchType;
     private Handler mainHandler = new Handler(Looper.getMainLooper());
     private Uri lastPickedUri;
     private File selectedFile = null;
+
+    // Для поиска
+    private Thread searchThread = null;
+    private volatile boolean shouldStopSearch = false;
+    private List<String> allResults = new ArrayList<>();
+    private int currentPage = 0;
+    private static final int RESULTS_PER_PAGE = 20;
 
     private final ActivityResultLauncher<Intent> filePickerLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
@@ -53,51 +62,16 @@ public class MainActivity extends AppCompatActivity {
             }
     );
 
-    private void setupSearchTypeDetector() {
-        final Handler handler = new Handler(Looper.getMainLooper());
-        final Runnable[] searchRunnable = new Runnable[1]; // Используем массив для "изменяемой" ссылки
-
-        editTextQuery.addTextChangedListener(new TextWatcher() {
-            @Override
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-
-            @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {}
-
-            @Override
-            public void afterTextChanged(Editable s) {
-                String query = s.toString().trim();
-
-                // Отменяем предыдущий запланированный запуск
-                if (searchRunnable[0] != null) {
-                    handler.removeCallbacks(searchRunnable[0]);
-                }
-
-                if (query.isEmpty()) {
-                    textViewSearchType.setText("Тип запроса не определён");
-                    textViewSearchType.setVisibility(View.GONE);
-                    return;
-                }
-
-                // Создаём новый Runnable
-                searchRunnable[0] = () -> {
-                    String queryType = detectQueryType(query);
-                    String displayText = getDisplayTextForType(queryType);
-                    textViewSearchType.setText(displayText);
-                    textViewSearchType.setVisibility(View.VISIBLE);
-                };
-
-                handler.postDelayed(searchRunnable[0], 3000); // 3 секунды
-            }
-        });
-    }
+    @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-        
+
+        // Инициализация всех View
         editTextQuery = findViewById(R.id.editTextQuery);
         buttonSearch = findViewById(R.id.buttonSearch);
         buttonAddFile = findViewById(R.id.buttonAddFile);
+        buttonNextPage = findViewById(R.id.buttonNextPage);
         textViewSearchType = findViewById(R.id.textViewSearchType);
         textViewResults = findViewById(R.id.textViewResults);
         textViewVersion = findViewById(R.id.textViewVersion);
@@ -108,18 +82,92 @@ public class MainActivity extends AppCompatActivity {
         buttonRenameFile = findViewById(R.id.buttonRenameFile);
         buttonShareFile = findViewById(R.id.buttonShareFile);
 
-        setupSearchTypeDetector();
+        // Настройка директории
         csvDir = new File(getExternalFilesDir(null), "csv");
         if (!csvDir.exists()) csvDir.mkdirs();
 
+        // Разрешения
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
                 != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this,
                     new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, REQUEST_CODE_PERMISSION);
         }
+
+        // Настройка всех компонентов
+        setVersionName();
         setupSearchTypeDetector();
-        buttonSearch.setOnClickListener(v -> startSearch());
+        setupSearchButton();           // ✅ Вызов
+        setupNextPageButton();         // ✅ Вызов
+        setupFileManagementButtons();  // ✅ Вызов
         buttonAddFile.setOnClickListener(v -> pickFile());
+        copySamplesFromAssets();
+    }
+    private void setVersionName() {
+        try {
+            String versionName = getPackageManager()
+                    .getPackageInfo(getPackageName(), 0).versionName;
+            textViewVersion.setText("Версия: v" + versionName);
+        } catch (Exception e) {
+            textViewVersion.setText("Версия: v1.0.2");
+        }
+    }
+    private void setupSearchTypeDetector() {
+        final Handler handler = new Handler(Looper.getMainLooper());
+        final Runnable[] searchRunnable = new Runnable[1];
+
+        editTextQuery.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {}
+
+            @Override
+            public void afterTextChanged(android.text.Editable s) {
+                String query = s.toString().trim();
+
+                if (searchRunnable[0] != null) {
+                    handler.removeCallbacks(searchRunnable[0]);
+                }
+
+                if (query.isEmpty()) {
+                    textViewSearchType.setText("Тип запроса не определён");
+                    textViewSearchType.setVisibility(View.GONE);
+                    return;
+                }
+
+                searchRunnable[0] = () -> {
+                    String queryType = detectQueryType(query);
+                    String displayText = getDisplayTextForType(queryType);
+                    textViewSearchType.setText(displayText);
+                    textViewSearchType.setVisibility(View.VISIBLE);
+                };
+
+                handler.postDelayed(searchRunnable[0], 3000);
+            }
+        });
+    }
+    private void setupSearchButton() {
+        buttonSearch.setOnClickListener(v -> {
+            if (searchThread == null || !searchThread.isAlive()) {
+                startSearch();
+                buttonSearch.setText("СТОП");
+            } else {
+                shouldStopSearch = true;
+                buttonSearch.setText("Поиск");
+                Toast.makeText(this, "Поиск остановлен", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void setupNextPageButton() {
+        buttonNextPage.setOnClickListener(v -> {
+            currentPage++;
+            showCurrentPage();
+        });
+    }
+
+    private void setupFileManagementButtons() {
         buttonShowFiles.setOnClickListener(v -> showFilesList());
 
         buttonDeleteFile.setOnClickListener(v -> {
@@ -180,19 +228,166 @@ public class MainActivity extends AppCompatActivity {
             shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             startActivity(Intent.createChooser(shareIntent, "Отправить"));
         });
-
-        setVersionName();
-        copySamplesFromAssets();
     }
 
-    private void setVersionName() {
-        try {
-            String versionName = getPackageManager()
-                    .getPackageInfo(getPackageName(), 0).versionName;
-            textViewVersion.setText("Версия: v" + versionName);
-        } catch (Exception e) {
-            textViewVersion.setText("Версия: v1.0.2");
+    private String detectQueryType(String query) {
+        query = query.trim();
+        if (query.isEmpty()) return "all";
+
+        if (query.matches("\\d+")) {
+            return "tel";
         }
+        if (query.contains("@")) {
+            return "email";
+        }
+        if (query.startsWith("@") || (query.toLowerCase().startsWith("id") && query.substring(2).matches("\\d+"))) {
+            return "tg_id";
+        }
+        if (query.matches("[a-zA-Zа-яА-ЯёЁ]+")) {
+            return "name";
+        }
+        return "all";
+    }
+
+    private String getDisplayTextForType(String type) {
+        switch (type) {
+            case "tel": return "🔍 Поиск по: Телефон";
+            case "email": return "📧 Поиск по: Email";
+            case "tg_id": return "💬 Поиск по: Telegram ID";
+            case "name": return "👤 Поиск по: Имя";
+            case "all": default: return "🔎 Поиск по: всем полям";
+        }
+    }
+
+    private void startSearch() {
+        String query = editTextQuery.getText().toString().trim();
+        if (query.isEmpty()) {
+            runOnUiThread(() -> {
+                textViewResults.setText("Введите запрос.");
+                buttonNextPage.setVisibility(View.GONE);
+                buttonSearch.setText("Поиск");
+            });
+            return;
+        }
+
+        if (searchThread != null && searchThread.isAlive()) {
+            shouldStopSearch = true;
+            try {
+                searchThread.join(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        shouldStopSearch = false;
+        allResults = new ArrayList<>();
+
+        searchThread = new Thread(() -> {
+            File[] files = csvDir.listFiles((dir, name) -> name.endsWith(".csv"));
+            if (files == null) return;
+
+            SharedPreferences prefs = getSharedPreferences("templates", MODE_PRIVATE);
+
+            for (File file : files) {
+                if (shouldStopSearch) break;
+
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file)))) {
+                    String headerLine = reader.readLine();
+                    if (headerLine == null || shouldStopSearch) continue;
+
+                    String delimiter = headerLine.contains(";") ? ";" : "\\|";
+                    String[] headers = headerLine.trim().split(delimiter, -1);
+
+                    int telIndex = -1, nameIndex = -1, emailIndex = -1, tgIdIndex = -1;
+                    for (int i = 0; i < headers.length; i++) {
+                        String h = headers[i].toLowerCase();
+                        if (h.contains("tel") || h.contains("phone")) telIndex = i;
+                        else if (h.contains("name") || h.contains("фио")) nameIndex = i;
+                        else if (h.contains("mail") || h.contains("email")) emailIndex = i;
+                        else if (h.contains("tg") || h.contains("telegram")) tgIdIndex = i;
+                    }
+
+                    String line;
+                    while (!shouldStopSearch && (line = reader.readLine()) != null) {
+                        line = line.trim();
+                        if (line.isEmpty()) continue;
+                        String[] parts = line.split(delimiter, -1);
+                        if (parts.length < headers.length) continue;
+
+                        boolean found = false;
+                        String queryLower = query.toLowerCase();
+
+                        if (query.matches("\\d+") && telIndex != -1) {
+                            found = cleanField(parts[telIndex]).contains(query);
+                        } else if (query.contains("@") && emailIndex != -1) {
+                            found = cleanField(parts[emailIndex]).toLowerCase().contains(queryLower);
+                        } else if ((query.startsWith("@") || (query.toLowerCase().startsWith("id") && query.substring(2).matches("\\d+"))) && tgIdIndex != -1) {
+                            found = cleanField(parts[tgIdIndex]).toLowerCase().contains(queryLower);
+                        } else if (query.matches("[a-zA-Zа-яА-ЯёЁ]+") && nameIndex != -1) {
+                            found = cleanField(parts[nameIndex]).toLowerCase().contains(queryLower);
+                        } else {
+                            for (String part : parts) {
+                                if (cleanField(part).toLowerCase().contains(queryLower)) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (found) {
+                            StringBuilder result = new StringBuilder();
+                            result.append("База: ").append(file.getName()).append("\n");
+                            for (int i = 0; i < headers.length; i++) {
+                                String value = i < parts.length ? cleanField(parts[i]) : "";
+                                result.append(headers[i]).append(": ").append(value.isEmpty() ? "отсутствует" : value).append("\n");
+                            }
+                            result.append("\n");
+                            allResults.add(result.toString());
+                        }
+                    }
+                } catch (IOException e) {
+                    if (!shouldStopSearch) {
+                        allResults.add("Ошибка чтения: " + file.getName());
+                    }
+                }
+            }
+
+            runOnUiThread(() -> {
+                if (shouldStopSearch) {
+                    Toast.makeText(this, "Поиск остановлен", Toast.LENGTH_SHORT).show();
+                } else {
+                    currentPage = 0;
+                    showCurrentPage();
+                    if (allResults.size() > RESULTS_PER_PAGE) {
+                        buttonNextPage.setVisibility(View.VISIBLE);
+                    } else {
+                        buttonNextPage.setVisibility(View.GONE);
+                    }
+                }
+                buttonSearch.setText("Поиск");
+            });
+        });
+
+        searchThread.start();
+    }
+
+    private void showCurrentPage() {
+        int fromIndex = currentPage * RESULTS_PER_PAGE;
+        int toIndex = Math.min(fromIndex + RESULTS_PER_PAGE, allResults.size());
+
+        List<String> pageResults = allResults.subList(fromIndex, toIndex);
+        String text = String.join("", pageResults);
+
+        runOnUiThread(() -> {
+            textViewResults.setText(text);
+            if (toIndex >= allResults.size()) {
+                buttonNextPage.setText("Больше нет результатов");
+                buttonNextPage.setEnabled(false);
+            } else {
+                buttonNextPage.setText("Следующие 20 результатов");
+                buttonNextPage.setEnabled(true);
+            }
+        });
     }
 
     private void pickFile() {
@@ -230,7 +425,7 @@ public class MainActivity extends AppCompatActivity {
                 inputStream.close();
                 inputStream = getContentResolver().openInputStream(uri);
                 reader = new BufferedReader(new InputStreamReader(inputStream));
-                reader.readLine(); // skip header
+                reader.readLine();
 
                 Map<String, Integer> fieldMapping = showMappingDialog(headers);
                 if (fieldMapping == null) return;
@@ -249,24 +444,18 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
 
-                // Сохраняем CSV
                 boolean success = saveFileFromUri(uri, outputFile);
-                if (!success) {
+                if (success) {
+                    saveSearchTemplate(outputFile.getName(), headers);
+                    mainHandler.post(() -> {
+                        Toast.makeText(this, "Файл добавлен: " + outputFile.getName(), Toast.LENGTH_LONG).show();
+                        showFilesList();
+                    });
+                } else {
                     mainHandler.post(() ->
                             Toast.makeText(this, "Ошибка при сохранении", Toast.LENGTH_SHORT).show()
                     );
-                    return;
                 }
-
-                // ✅ Создаём индекс для быстрого поиска
-                createSearchIndex(outputFile, headers);
-
-                saveSearchTemplate(outputFile.getName(), headers);
-
-                mainHandler.post(() -> {
-                    Toast.makeText(this, "Файл добавлен: " + outputFile.getName(), Toast.LENGTH_LONG).show();
-                    showFilesList();
-                });
 
             } catch (Exception e) {
                 e.printStackTrace();
@@ -276,34 +465,7 @@ public class MainActivity extends AppCompatActivity {
             }
         }).start();
     }
-    private void createSearchIndex(File csvFile, String[] headers) {
-        File indexFile = new File(csvFile.getParent(), csvFile.getName() + ".idx");
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(csvFile)));
-             BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(indexFile)))) {
 
-            String headerLine = reader.readLine(); // skip
-            if (headerLine == null) return;
-
-            String line;
-            while ((line = reader.readLine()) != null) {
-                line = line.trim();
-                if (line.isEmpty()) continue;
-                String[] parts = line.split("[;|]", -1);
-                if (parts.length < headers.length) continue;
-
-                StringBuilder searchableLine = new StringBuilder();
-                for (int i = 0; i < headers.length; i++) {
-                    String value = i < parts.length ? cleanField(parts[i]) : "";
-                    searchableLine.append(value.toLowerCase()).append(" ");
-                }
-                writer.write(searchableLine.toString().trim());
-                writer.newLine();
-            }
-
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
     private Map<String, Integer> showMappingDialog(String[] headers) {
         Map<String, Integer> mapping = new HashMap<>();
         boolean[] finished = {false};
@@ -362,15 +524,7 @@ public class MainActivity extends AppCompatActivity {
 
         return mapping.isEmpty() ? null : mapping;
     }
-    private String getDisplayTextForType(String type) {
-        switch (type) {
-            case "tel": return "🔍 Поиск по: Телефон";
-            case "email": return "📧 Поиск по: Email";
-            case "tg_id": return "💬 Поиск по: Telegram ID";
-            case "name": return "👤 Поиск по: Имя";
-            case "all": default: return "🔎 Поиск по: всем полям";
-        }
-    }
+
     private String inferKey(String header) {
         header = header.toLowerCase();
         if (header.contains("tel") || header.contains("phone")) return "tel";
@@ -485,119 +639,9 @@ public class MainActivity extends AppCompatActivity {
             return false;
         }
     }
-    private String detectQueryType(String query) {
-        query = query.trim();
-        if (query.isEmpty()) return "all";
 
-        // 1. Только цифры — это телефон
-        if (query.matches("\\d+")) {
-            return "tel";
-        }
-
-        // 2. Есть @ — это email
-        if (query.contains("@")) {
-            return "email";
-        }
-
-        // 3. tg_id: начинается с @ или id + цифры
-        if (query.startsWith("@") || (query.toLowerCase().startsWith("id") && query.substring(2).matches("\\d+"))) {
-            return "tg_id";
-        }
-
-        // 4. Только буквы — это имя
-        if (query.matches("[a-zA-Zа-яА-ЯёЁ]+")) {
-            return "name";
-        }
-
-        // Если не поняли — ищем по всем полям
-        return "all";
-    }
-    private void startSearch() {
-        String query = editTextQuery.getText().toString().trim();
-        if (query.isEmpty()) {
-            runOnUiThread(() -> textViewResults.setText("Введите запрос."));
-            return;
-        }
-
-        String queryLower = query.toLowerCase();
-        String queryType = detectQueryType(query);
-
-        textViewResults.setText("Поиск...");
-        new Thread(() -> {
-            List<String> results = new ArrayList<>();
-            File[] files = csvDir.listFiles((dir, name) -> name.endsWith(".csv"));
-            if (files == null) return;
-
-            SharedPreferences prefs = getSharedPreferences("templates", MODE_PRIVATE);
-
-            for (File file : files) {
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file)))) {
-                    String headerLine = reader.readLine();
-                    if (headerLine == null) continue;
-
-                    String delimiter = headerLine.contains(";") ? ";" : "\\|";
-                    String[] headers = headerLine.trim().split(delimiter, -1);
-
-                    // Определяем индексы нужных полей
-                    int telIndex = -1, nameIndex = -1, emailIndex = -1, tgIdIndex = -1;
-                    for (int i = 0; i < headers.length; i++) {
-                        String h = headers[i].toLowerCase();
-                        if (h.contains("tel") || h.contains("phone")) telIndex = i;
-                        else if (h.contains("name") || h.contains("фио")) nameIndex = i;
-                        else if (h.contains("mail") || h.contains("email")) emailIndex = i;
-                        else if (h.contains("tg") || h.contains("telegram")) tgIdIndex = i;
-                    }
-
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        line = line.trim();
-                        if (line.isEmpty()) continue;
-                        String[] parts = line.split(delimiter, -1);
-                        if (parts.length < headers.length) continue;
-
-                        boolean found = false;
-
-                        // Ищем только в нужном поле
-                        if (queryType.equals("tel") && telIndex != -1) {
-                            found = cleanField(parts[telIndex]).contains(query);
-                        } else if (queryType.equals("email") && emailIndex != -1) {
-                            found = cleanField(parts[emailIndex]).toLowerCase().contains(queryLower);
-                        } else if (queryType.equals("tg_id") && tgIdIndex != -1) {
-                            found = cleanField(parts[tgIdIndex]).toLowerCase().contains(queryLower);
-                        } else if (queryType.equals("name") && nameIndex != -1) {
-                            found = cleanField(parts[nameIndex]).toLowerCase().contains(queryLower);
-                        } else {
-                            // Если тип не определён — ищем по всем полям
-                            for (String part : parts) {
-                                if (cleanField(part).toLowerCase().contains(queryLower)) {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                        }
-
-                        if (found) {
-                            StringBuilder result = new StringBuilder();
-                            result.append("База: ").append(file.getName()).append("\n");
-                            for (int i = 0; i < headers.length; i++) {
-                                String value = i < parts.length ? cleanField(parts[i]) : "";
-                                result.append(headers[i]).append(": ").append(value.isEmpty() ? "отсутствует" : value).append("\n");
-                            }
-                            result.append("\n");
-                            results.add(result.toString());
-                        }
-                    }
-                } catch (IOException e) {
-                    results.add("Ошибка чтения: " + file.getName());
-                }
-            }
-
-            String finalText = results.isEmpty() ?
-                    "Ничего не найдено: " + query :
-                    String.join("", results);
-
-            runOnUiThread(() -> textViewResults.setText(finalText));
-        }).start();
+    private String cleanField(String s) {
+        return s == null ? "" : s.trim().replaceAll("^\"|\"$", "");
     }
 
     private void showFilesList() {
@@ -618,15 +662,7 @@ public class MainActivity extends AppCompatActivity {
         listViewFiles.setAdapter(adapter);
         listViewFiles.setVisibility(View.VISIBLE);
         layoutFileActions.setVisibility(View.GONE);
-        listViewFiles.setOnItemClickListener((p, v, pos, id) -> {
-            selectedFile = files[pos];
-            layoutFileActions.setVisibility(View.VISIBLE);
-        });
         selectedFile = null;
-    }
-
-    private String cleanField(String s) {
-        return s == null ? "" : s.trim().replaceAll("^\"|\"$", "");
     }
 
     private void copySamplesFromAssets() {

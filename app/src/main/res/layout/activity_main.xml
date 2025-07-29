@@ -102,7 +102,14 @@
             android:ellipsize="end" />
 
     </ScrollView>
-
+    <!-- Кнопка "Следующие результаты" -->
+    <Button
+        android:id="@+id/buttonNextPage"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Следующие 20 результатов"
+        android:visibility="gone" />
     <!-- Отображение версии приложения -->
     <TextView
         android:id="@+id/textViewVersion"
