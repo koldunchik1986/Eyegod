@@ -120,7 +120,7 @@ public class MainActivity extends AppCompatActivity {
         final Handler handler = new Handler(Looper.getMainLooper());
         final Runnable[] searchRunnable = new Runnable[1];
 
-        editTextQuery.addTextChangedListener(new android.text.TextWatcher() {
+        editTextQuery.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
 
@@ -128,7 +128,7 @@ public class MainActivity extends AppCompatActivity {
             public void onTextChanged(CharSequence s, int start, int before, int count) {}
 
             @Override
-            public void afterTextChanged(android.text.Editable s) {
+            public void afterTextChanged(Editable s) {
                 String query = s.toString().trim();
 
                 if (searchRunnable[0] != null) {
@@ -384,17 +384,14 @@ public class MainActivity extends AppCompatActivity {
 
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(indexFile)))) {
                     String line;
-                    int lineNumber = 0;
+                    int lineNumberInIdx = 0; // Номер строки в .idx файле
+
                     while (!shouldStopSearch && (line = reader.readLine()) != null) {
-                        lineNumber++;
+                        lineNumberInIdx++;
 
                         boolean found = false;
                         switch (queryType) {
                             case "tel":
-                                if (line.contains(queryLower)) {
-                                    found = true;
-                                }
-                                break;
                             case "email":
                             case "tg_id":
                             case "name":
@@ -406,7 +403,9 @@ public class MainActivity extends AppCompatActivity {
                         }
 
                         if (found) {
-                            String originalData = readLineFromCsv(file, lineNumber);
+                            // ✅ В .idx нет заголовка, в CSV — есть
+                            // Поэтому номер строки в CSV = lineNumberInIdx + 1
+                            String originalData = readLineFromCsv(file, lineNumberInIdx);
                             if (originalData != null) {
                                 allResults.add(originalData);
                             }
@@ -531,6 +530,7 @@ public class MainActivity extends AppCompatActivity {
             }
 
             String line;
+            int lineNumber = 0;
             while ((line = reader.readLine()) != null) {
                 line = line.trim();
                 if (line.isEmpty()) continue;
