@@ -62,7 +62,11 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
     );
-
+    private static class SearchResult {
+        File csvFile;
+        int lineNumber;
+    }
+    private List<SearchResult> searchResults = new ArrayList<>();
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -163,6 +167,14 @@ public class MainActivity extends AppCompatActivity {
     private void showCurrentPage() {
         int fromIndex = currentPage * RESULTS_PER_PAGE;
         int toIndex = Math.min(fromIndex + RESULTS_PER_PAGE, allResults.size());
+
+        if (fromIndex < 0 || fromIndex >= allResults.size()) {
+            runOnUiThread(() -> {
+                textViewResults.setText("Ошибка: неверная страница.");
+                buttonNextPage.setVisibility(View.GONE);
+            });
+            return;
+        }
 
         List<String> pageResults = allResults.subList(fromIndex, toIndex);
         String text = String.join("", pageResults);
@@ -321,6 +333,8 @@ public class MainActivity extends AppCompatActivity {
 
     private void startSearch() {
         String query = editTextQuery.getText().toString().trim();
+        String queryLower = query.toLowerCase(); // Объявлена вне потока
+
         if (query.isEmpty()) {
             runOnUiThread(() -> {
                 textViewResults.setText("Введите запрос.");
@@ -342,7 +356,7 @@ public class MainActivity extends AppCompatActivity {
 
         // ✅ ОЧИЩАЕМ allResults ПЕРЕД НОВЫМ ПОИСКОМ
         allResults.clear(); // ✅ Добавляем эту строку
-
+        // List<String> tempResults = new ArrayList<>();
         shouldStopSearch = false;
 
         searchThread = new Thread(() -> {
@@ -377,11 +391,15 @@ public class MainActivity extends AppCompatActivity {
                         boolean found = false;
                         switch (queryType) {
                             case "tel":
+                                if (line.contains(queryLower)) {
+                                    found = true;
+                                }
+                                break;
                             case "email":
                             case "tg_id":
                             case "name":
                             default:
-                                if (line.contains(query.toLowerCase())) {
+                                if (line.contains(queryLower)) {
                                     found = true;
                                 }
                                 break;
