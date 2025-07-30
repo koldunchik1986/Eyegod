@@ -23,6 +23,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
+import android.util.Log;
 
 import java.io.*;
 import java.security.MessageDigest;
@@ -329,10 +330,7 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        // ✅ Создаём копии ДО запуска потока
-        String queryLower = query.toLowerCase(); // Для contains
-        String queryForStartsWith = query; // Для startsWith
-
+        // Останавливаем предыдущий поиск, если он был
         if (searchThread != null && searchThread.isAlive()) {
             shouldStopSearch = true;
             try {
@@ -342,17 +340,30 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
+        // ✅ ОЧИЩАЕМ allResults ПЕРЕД НОВЫМ ПОИСКОМ
+        allResults.clear(); // ✅ Добавляем эту строку
+
         shouldStopSearch = false;
-        allResults = new ArrayList<>();
 
         searchThread = new Thread(() -> {
-            String finalQueryType = detectQueryType(query); // ✅ Используем оригинальный query
+            String queryType = detectQueryType(query);
 
             File[] files = csvDir.listFiles((dir, name) -> name.endsWith(".csv"));
-            if (files == null) return;
+            if (files == null || files.length == 0) {
+                runOnUiThread(() -> {
+                    textViewResults.setText("Нет файлов для поиска.");
+                    buttonSearch.setText("Поиск");
+                });
+                return;
+            }
 
             for (File file : files) {
                 if (shouldStopSearch) break;
+
+                final String fileName = file.getName();
+                runOnUiThread(() -> {
+                    textViewResults.setText("🔍 Поиск в файле: " + fileName + "...");
+                });
 
                 File indexFile = new File(file.getParent(), file.getName() + ".idx");
                 if (!indexFile.exists()) continue;
@@ -360,42 +371,32 @@ public class MainActivity extends AppCompatActivity {
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(indexFile)))) {
                     String line;
                     int lineNumber = 0;
-
                     while (!shouldStopSearch && (line = reader.readLine()) != null) {
                         lineNumber++;
 
                         boolean found = false;
-                        switch (finalQueryType) {
+                        switch (queryType) {
                             case "tel":
-                                // ✅ ВАЖНО: Используем contains, а не startsWith, потому что:
-                                // 1. Поиск по телефону не обязательно в начале строки индекса
-                                // 2. Гарантируем совпадение регистра
-                                if (line.contains(queryLower)) {
-                                    found = true;
-                                }
-                                break;
                             case "email":
                             case "tg_id":
                             case "name":
                             default:
-                                if (line.contains(queryLower)) {
+                                if (line.contains(query.toLowerCase())) {
                                     found = true;
                                 }
                                 break;
                         }
 
                         if (found) {
-                            String originalLine = readLineFromCsv(file, lineNumber);
-                            if (originalLine != null) {
-                                allResults.add(originalLine);
+                            String originalData = readLineFromCsv(file, lineNumber);
+                            if (originalData != null) {
+                                allResults.add(originalData);
                             }
                         }
                     }
                 } catch (IOException e) {
                     e.printStackTrace();
-                    if (!shouldStopSearch) {
-                        allResults.add("Ошибка чтения: " + file.getName());
-                    }
+                    Log.e("Search", "Ошибка чтения индекса: " + indexFile.getName(), e);
                 }
             }
 
@@ -404,12 +405,12 @@ public class MainActivity extends AppCompatActivity {
                 if (shouldStopSearch) {
                     Toast.makeText(this, "Поиск остановлен", Toast.LENGTH_SHORT).show();
                 } else {
-                    currentPage = 0;
-                    showCurrentPage();
-                    if (allResults.size() > RESULTS_PER_PAGE) {
-                        buttonNextPage.setVisibility(View.VISIBLE);
+                    if (allResults.isEmpty()) {
+                        textViewResults.setText("Ничего не найдено: " + query);
                     } else {
-                        buttonNextPage.setVisibility(View.GONE);
+                        currentPage = 0;
+                        showCurrentPage();
+                        buttonNextPage.setVisibility(allResults.size() > RESULTS_PER_PAGE ? View.VISIBLE : View.GONE);
                     }
                 }
                 buttonSearch.setText("Поиск");
@@ -417,14 +418,14 @@ public class MainActivity extends AppCompatActivity {
         });
 
         searchThread.start();
-
-    }private String readLineFromCsv(File csvFile, int targetLine) {
+    }
+    private String readLineFromCsv(File csvFile, int targetLine) {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(csvFile)))) {
             String line;
             int currentLine = 0;
             while ((line = reader.readLine()) != null) {
                 if (currentLine == targetLine) {
-                    // Парсим строку и форматируем для вывода
+                    // Убедитесь, что parts.length соответствует headers.length
                     String[] parts = line.split("[;|]", -1);
                     String headerLine = getHeaderLine(csvFile);
                     if (headerLine == null) return null;
@@ -443,6 +444,7 @@ public class MainActivity extends AppCompatActivity {
             }
         } catch (IOException e) {
             e.printStackTrace();
+            Log.e("Search", "Ошибка чтения CSV: " + csvFile.getName(), e);
         }
         return null;
     }
@@ -493,53 +495,25 @@ public class MainActivity extends AppCompatActivity {
         filePickerLauncher.launch(intent);
     }
     private void createSearchIndex(File csvFile, String[] headers) {
-        File indexFile = new File(csvFile.getParent(), csvFile.getName() + ".idx");
+        File indexFile = new File(csvDir, csvFile.getName() + ".idx");
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(csvFile)));
              BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(indexFile)))) {
 
-            String headerLine = reader.readLine(); // skip
-            if (headerLine == null) return;
-
-            // Определяем индексы нужных полей
-            int telIndex = -1, nameIndex = -1, emailIndex = -1, tgIdIndex = -1;
-            for (int i = 0; i < headers.length; i++) {
-                String h = headers[i].toLowerCase();
-                if (h.contains("tel") || h.contains("phone")) telIndex = i;
-                else if (h.contains("name") || h.contains("фио")) nameIndex = i;
-                else if (h.contains("mail") || h.contains("email")) emailIndex = i;
-                else if (h.contains("tg") || h.contains("telegram")) tgIdIndex = i;
-            }
+            reader.readLine(); // skip header
 
             String line;
             while ((line = reader.readLine()) != null) {
                 line = line.trim();
                 if (line.isEmpty()) continue;
                 String[] parts = line.split("[;|]", -1);
-                if (parts.length < headers.length) continue;
 
-                StringBuilder searchableLine = new StringBuilder();
-
-                // Добавляем только нужные поля
-                if (telIndex != -1 && telIndex < parts.length) {
-                    searchableLine.append(cleanField(parts[telIndex]).toLowerCase()).append(" ");
+                StringBuilder sb = new StringBuilder();
+                for (String part : parts) {
+                    sb.append(cleanField(part).toLowerCase()).append(" ");
                 }
-                if (nameIndex != -1 && nameIndex < parts.length) {
-                    searchableLine.append(cleanField(parts[nameIndex]).toLowerCase()).append(" ");
-                }
-                if (emailIndex != -1 && emailIndex < parts.length) {
-                    searchableLine.append(cleanField(parts[emailIndex]).toLowerCase()).append(" ");
-                }
-                if (tgIdIndex != -1 && tgIdIndex < parts.length) {
-                    searchableLine.append(cleanField(parts[tgIdIndex]).toLowerCase()).append(" ");
-                }
-
-                String indexLine = searchableLine.toString().trim();
-                if (!indexLine.isEmpty()) {
-                    writer.write(indexLine);
-                    writer.newLine();
-                }
+                writer.write(sb.toString().trim());
+                writer.newLine();
             }
-
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -559,7 +533,7 @@ public class MainActivity extends AppCompatActivity {
                 String headerLine = reader.readLine();
                 if (headerLine == null) {
                     mainHandler.post(() ->
-                            Toast.makeText(this, "Файл пустой", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this, "Файл пустой", Toast.LENGTH_LONG).show()
                     );
                     return;
                 }
@@ -591,10 +565,8 @@ public class MainActivity extends AppCompatActivity {
 
                 boolean success = saveFileFromUri(uri, outputFile);
                 if (success) {
-                    // ✅ Ключевая строка: создаём индекс
                     createSearchIndex(outputFile, headers);
                     saveSearchTemplate(outputFile.getName(), headers);
-
                     mainHandler.post(() -> {
                         Toast.makeText(this, "Файл добавлен: " + outputFile.getName(), Toast.LENGTH_LONG).show();
                         showFilesList();
