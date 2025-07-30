@@ -530,16 +530,15 @@ public class MainActivity extends AppCompatActivity {
             }
 
             String line;
-            int lineNumber = 0;
             while ((line = reader.readLine()) != null) {
                 line = line.trim();
-                if (line.isEmpty()) continue;
+                // ❌ Убираем: if (line.isEmpty()) continue;
+
                 String[] parts = line.split("[;|]", -1);
                 if (parts.length < headers.length) continue;
 
                 StringBuilder searchableLine = new StringBuilder();
 
-                // Добавляем только нужные поля
                 if (telIndex != -1 && telIndex < parts.length) {
                     searchableLine.append(cleanField(parts[telIndex]).toLowerCase()).append(" ");
                 }
@@ -554,10 +553,9 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 String indexLine = searchableLine.toString().trim();
-                if (!indexLine.isEmpty()) {
-                    writer.write(indexLine);
-                    writer.newLine();
-                }
+                // Пишем строку в .idx, даже если она пустая
+                writer.write(indexLine.isEmpty() ? "" : indexLine);
+                writer.newLine();
             }
 
         } catch (IOException e) {
