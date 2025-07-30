@@ -495,25 +495,53 @@ public class MainActivity extends AppCompatActivity {
         filePickerLauncher.launch(intent);
     }
     private void createSearchIndex(File csvFile, String[] headers) {
-        File indexFile = new File(csvDir, csvFile.getName() + ".idx");
+        File indexFile = new File(csvFile.getParent(), csvFile.getName() + ".idx");
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(csvFile)));
              BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(indexFile)))) {
 
-            reader.readLine(); // skip header
+            String headerLine = reader.readLine(); // skip
+            if (headerLine == null) return;
+
+            // Определяем индексы нужных полей
+            int telIndex = -1, nameIndex = -1, emailIndex = -1, tgIdIndex = -1;
+            for (int i = 0; i < headers.length; i++) {
+                String h = headers[i].toLowerCase();
+                if (h.contains("tel") || h.contains("phone")) telIndex = i;
+                else if (h.contains("name") || h.contains("фио")) nameIndex = i;
+                else if (h.contains("mail") || h.contains("email")) emailIndex = i;
+                else if (h.contains("tg") || h.contains("telegram")) tgIdIndex = i;
+            }
 
             String line;
             while ((line = reader.readLine()) != null) {
                 line = line.trim();
                 if (line.isEmpty()) continue;
                 String[] parts = line.split("[;|]", -1);
+                if (parts.length < headers.length) continue;
 
-                StringBuilder sb = new StringBuilder();
-                for (String part : parts) {
-                    sb.append(cleanField(part).toLowerCase()).append(" ");
+                StringBuilder searchableLine = new StringBuilder();
+
+                // Добавляем только нужные поля
+                if (telIndex != -1 && telIndex < parts.length) {
+                    searchableLine.append(cleanField(parts[telIndex]).toLowerCase()).append(" ");
                 }
-                writer.write(sb.toString().trim());
-                writer.newLine();
+                if (nameIndex != -1 && nameIndex < parts.length) {
+                    searchableLine.append(cleanField(parts[nameIndex]).toLowerCase()).append(" ");
+                }
+                if (emailIndex != -1 && emailIndex < parts.length) {
+                    searchableLine.append(cleanField(parts[emailIndex]).toLowerCase()).append(" ");
+                }
+                if (tgIdIndex != -1 && tgIdIndex < parts.length) {
+                    searchableLine.append(cleanField(parts[tgIdIndex]).toLowerCase()).append(" ");
+                }
+
+                String indexLine = searchableLine.toString().trim();
+                if (!indexLine.isEmpty()) {
+                    writer.write(indexLine);
+                    writer.newLine();
+                }
             }
+
         } catch (IOException e) {
             e.printStackTrace();
         }
