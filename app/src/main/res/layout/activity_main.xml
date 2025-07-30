@@ -5,6 +5,16 @@
     android:orientation="vertical"
     android:padding="16dp">
 
+    <!-- Отображение версии приложения -->
+    <TextView
+        android:id="@+id/textViewVersion"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="8dp"
+        android:text="@koldun1986 Версия: v1.0.2"
+        android:textSize="12sp"
+        android:textColor="#666" />
     <!-- Кнопка добавить CSV -->
     <Button
         android:id="@+id/buttonAddFile"
@@ -110,15 +120,6 @@
         android:layout_marginTop="8dp"
         android:text="Следующие 20 результатов"
         android:visibility="gone" />
-    <!-- Отображение версии приложения -->
-    <TextView
-        android:id="@+id/textViewVersion"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center_horizontal"
-        android:layout_marginTop="8dp"
-        android:text="Версия: v1.0.2"
-        android:textSize="12sp"
-        android:textColor="#666" />
+
 
 </LinearLayout>

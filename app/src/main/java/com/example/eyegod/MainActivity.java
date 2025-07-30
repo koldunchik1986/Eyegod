@@ -111,9 +111,9 @@ public class MainActivity extends AppCompatActivity {
         try {
             String versionName = getPackageManager()
                     .getPackageInfo(getPackageName(), 0).versionName;
-            textViewVersion.setText("Версия: v" + versionName);
+            textViewVersion.setText("@koldun1986 Версия: v" + versionName);
         } catch (Exception e) {
-            textViewVersion.setText("Версия: v1.0.2");
+            textViewVersion.setText("@koldun1986 Версия: v1.0.2");
         }
     }
     private void setupSearchTypeDetector() {
